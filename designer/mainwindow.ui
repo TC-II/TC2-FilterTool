@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1017</width>
+    <width>1110</width>
     <height>756</height>
    </rect>
   </property>
@@ -14,7 +14,7 @@
    <bool>true</bool>
   </property>
   <property name="windowTitle">
-   <string>FilterPlotToolG2</string>
+   <string>FilterPlotTool</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <property name="acceptDrops">
@@ -29,14 +29,20 @@
         <verstretch>0</verstretch>
        </sizepolicy>
       </property>
+      <property name="font">
+       <font>
+        <family>Arial</family>
+        <pointsize>9</pointsize>
+       </font>
+      </property>
       <property name="currentIndex">
-       <number>1</number>
+       <number>0</number>
       </property>
       <widget class="QWidget" name="tab">
        <attribute name="title">
         <string>Plotting</string>
        </attribute>
-       <layout class="QGridLayout" name="gridLayout_13" columnstretch="0,0,0">
+       <layout class="QGridLayout" name="gridLayout_13" columnstretch="0,10,9">
         <item row="0" column="0">
          <widget class="QGroupBox" name="groupBox">
           <property name="minimumSize">
@@ -101,8 +107,8 @@
                <rect>
                 <x>0</x>
                 <y>0</y>
-                <width>98</width>
-                <height>451</height>
+                <width>217</width>
+                <height>544</height>
                </rect>
               </property>
               <property name="sizePolicy">
@@ -631,7 +637,7 @@
           </property>
           <property name="maximumSize">
            <size>
-            <width>237</width>
+            <width>250</width>
             <height>16777215</height>
            </size>
           </property>
@@ -671,8 +677,8 @@
                <rect>
                 <x>0</x>
                 <y>0</y>
-                <width>98</width>
-                <height>492</height>
+                <width>205</width>
+                <height>582</height>
                </rect>
               </property>
               <property name="sizePolicy">
@@ -710,7 +716,7 @@
                  </property>
                  <property name="maximumSize">
                   <size>
-                   <width>180</width>
+                   <width>16777215</width>
                    <height>16777215</height>
                   </size>
                  </property>
@@ -1406,8 +1412,8 @@
                   <rect>
                    <x>0</x>
                    <y>0</y>
-                   <width>203</width>
-                   <height>431</height>
+                   <width>98</width>
+                   <height>514</height>
                   </rect>
                  </property>
                  <property name="sizePolicy">
@@ -1850,8 +1856,8 @@
                <rect>
                 <x>0</x>
                 <y>0</y>
-                <width>240</width>
-                <height>352</height>
+                <width>98</width>
+                <height>421</height>
                </rect>
               </property>
               <property name="sizePolicy">
@@ -2342,8 +2348,8 @@
             <rect>
              <x>0</x>
              <y>0</y>
-             <width>300</width>
-             <height>653</height>
+             <width>98</width>
+             <height>755</height>
             </rect>
            </property>
            <property name="sizePolicy">
@@ -2963,8 +2969,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1017</width>
-     <height>21</height>
+     <width>1110</width>
+     <height>26</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuProject">
