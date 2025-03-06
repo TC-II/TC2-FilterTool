@@ -25,6 +25,12 @@
      <height>32</height>
     </rect>
    </property>
+   <property name="font">
+    <font>
+     <family>Arial</family>
+     <pointsize>9</pointsize>
+    </font>
+   </property>
    <property name="orientation">
     <enum>Qt::Horizontal</enum>
    </property>
@@ -38,12 +44,24 @@
      <x>12</x>
      <y>15</y>
      <width>371</width>
-     <height>211</height>
+     <height>220</height>
     </rect>
+   </property>
+   <property name="font">
+    <font>
+     <family>Arial</family>
+     <pointsize>9</pointsize>
+    </font>
    </property>
    <layout class="QGridLayout" name="gridLayout">
     <item row="0" column="0">
      <widget class="QLineEdit" name="tf_title">
+      <property name="font">
+       <font>
+        <family>Arial</family>
+        <pointsize>9</pointsize>
+       </font>
+      </property>
       <property name="text">
        <string/>
       </property>
@@ -57,18 +75,37 @@
       <property name="enabled">
        <bool>false</bool>
       </property>
+      <property name="font">
+       <font>
+        <family>Arial</family>
+        <pointsize>9</pointsize>
+       </font>
+      </property>
       <property name="placeholderText">
        <string>Function</string>
       </property>
      </widget>
     </item>
     <item row="2" column="0">
-     <widget class="ExprWidget" name="expr_plot" native="true"/>
+     <widget class="ExprWidget" name="expr_plot" native="true">
+      <property name="font">
+       <font>
+        <family>Arial</family>
+        <pointsize>9</pointsize>
+       </font>
+      </property>
+     </widget>
     </item>
     <item row="3" column="0">
      <widget class="QPushButton" name="check_btn">
       <property name="enabled">
        <bool>true</bool>
+      </property>
+      <property name="font">
+       <font>
+        <family>Arial</family>
+        <pointsize>9</pointsize>
+       </font>
       </property>
       <property name="text">
        <string>Check Expression</string>
@@ -82,6 +119,12 @@
         <horstretch>0</horstretch>
         <verstretch>0</verstretch>
        </sizepolicy>
+      </property>
+      <property name="font">
+       <font>
+        <family>Arial</family>
+        <pointsize>9</pointsize>
+       </font>
       </property>
       <property name="text">
        <string/>

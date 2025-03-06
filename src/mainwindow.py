@@ -387,6 +387,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.dataline_list.setCurrentRow(self.dataline_list.count() - 1)
         except AttributeError:
             pass
+        except UnboundLocalError:
+            pass
         self.updatePlots()
     
     def removeSelectedDataline(self, event):
