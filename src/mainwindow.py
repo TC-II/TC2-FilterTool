@@ -97,6 +97,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.ds_remove_btn.clicked.connect(self.removeSelectedDataset)
         self.ds_poleszeros_btn.clicked.connect(self.showZPWindow)
 
+        self.dataline_gb.setEnabled(False)
         self.dataline_list.currentItemChanged.connect(self.populateSelectedDatalineDetails)
         self.dl_name_edit.textEdited.connect(self.updateSelectedDataline)
         self.dl_render_cb.activated.connect(self.updateSelectedDataline)
@@ -1712,24 +1713,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.ds_remove_btn.setEnabled(enabled)
 
     def setDatalineControlsStatus(self, enabled=True):
-        self.dl_name_edit.setEnabled(enabled)
-        self.dl_render_cb.setEnabled(enabled)
-        self.dl_transform_cb.setEnabled(enabled)
-        self.dl_xdata_cb.setEnabled(enabled)
-        self.dl_xscale_sb.setEnabled(enabled)
-        self.dl_xoffset_sb.setEnabled(enabled)
-        self.dl_ydata_cb.setEnabled(enabled)
-        self.dl_yscale_sb.setEnabled(enabled)
-        self.dl_yoffset_sb.setEnabled(enabled)
-        self.dl_color_edit.setEnabled(enabled)
-        self.dl_color_pickerbtn.setEnabled(enabled)
-        self.dl_style_cb.setEnabled(enabled)
-        self.dl_linewidth_sb.setEnabled(enabled)
-        self.dl_marker_cb.setEnabled(enabled)
-        self.dl_markersize_sb.setEnabled(enabled)
-        self.dl_savgol_wlen.setEnabled(enabled)
-        self.dl_savgol_ord.setEnabled(enabled)
-        self.dl_remove_btn.setEnabled(enabled)
+        self.dataline_gb.setEnabled(enabled)
 
     def getPlotFromIndex(self, plotnum):
         x = plotnum

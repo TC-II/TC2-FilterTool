@@ -146,11 +146,11 @@ class Dataset:
                             self.data[0][field].append(np.complex128(val))
                         elif(val != ''):
                             self.data[0][field].append(float(val))
-                        else:
-                            maxlen = len(self.data[0][field])
-                            for (field2, val2) in row.items():
-                                self.data[0][field2] = self.data[0][field2][:maxlen]
-                            break
+                        # else:
+                        #     maxlen = len(self.data[0][field])
+                        #     for (field2, val2) in row.items():
+                        #         self.data[0][field2] = self.data[0][field2][:maxlen]
+                        #     break
                     except(ValueError):
                         pass
                     except(TypeError):
