@@ -1,4 +1,4 @@
-# PlotTool TC^2
+# FilterTool
 
 ## Utilización
 
