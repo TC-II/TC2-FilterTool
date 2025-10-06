@@ -500,7 +500,7 @@ class AnalogFilter():
         self.stages = []
         self.implemented_tf = TFunction(1, 1, normalize=False)
 
-    def addStage(self, z_arr, p_arr, gain, normtype, symdrl=False, pz_in_hz=False):
+    def addStage(self, z_arr, p_arr, gain, normtype, symdrl=False, force_gain=True, pz_in_hz=False):
         if(pz_in_hz):
             # Por problemas de precisión, tengo que buscar los polos originales haciendo la misma transformación exacta
             # que los que llegaron en Hz
@@ -550,7 +550,7 @@ class AnalogFilter():
 
         
         newStage_tf = TFunction(z_arr, p_arr, norm_gain*resultingGain, normalize=False)
-        if(newRemainingZeros == 0 and newRemainingPoles == 0):
+        if(force_gain and newRemainingZeros == 0 and newRemainingPoles == 0):
             val=0
             if(self.filter_type==LOW_PASS):
                 val = newStage_tf.at(0) * self.implemented_tf.at(0)
@@ -577,7 +577,8 @@ class AnalogFilter():
         # norm_gain *= gain
         self.remainingk /= newStage_tf.k
         self.remainingGain /= resultingGain
-        newStage_tf.gain = resultingGain
+        if(force_gain):
+            newStage_tf.gain = resultingGain
 
         if(self.filter_type == BAND_PASS):
             self.kbandpasscurr /= newStage_tf.k

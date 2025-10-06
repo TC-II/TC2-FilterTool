@@ -249,9 +249,16 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.fplot_pz.canvas.draw_idle()
 
     def updateComparisonAproxOptions(self, index):
-        self.compareapprox_cb.model().item(index).setCheckState(False)
-        for i in range(self.compareapprox_cb.count()):
-            self.compareapprox_cb.model().item(i).setEnabled(i != index)
+        for i in range(Filter.APPRX_NONE):
+            if(i in range(Filter.LEGENDRE + 1)):
+                self.compareapprox_cb.model().item(i).setEnabled(self.tipo_box.currentIndex() != Filter.GROUP_DELAY)
+                if(self.tipo_box.currentIndex() == Filter.GROUP_DELAY):
+                    self.compareapprox_cb.model().item(i).setCheckState(Qt.Unchecked)
+            else:
+                self.compareapprox_cb.model().item(i).setEnabled(True)
+
+        self.compareapprox_cb.model().item(self.aprox_box.currentIndex()).setEnabled(False)
+            
 
     def selectUseCanonical(self):
         self.actionColorsCanonical.setChecked(True)
@@ -604,17 +611,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.populateSelectedDatasetDetails(self.selected_dataset_widget, None)
 
     def updateFilterParametersAvailable(self):
+        self.updateComparisonAproxOptions(0)
         if self.tipo_box.currentIndex() == Filter.LOW_PASS or self.tipo_box.currentIndex() == Filter.HIGH_PASS:
             for i in range(Filter.LEGENDRE + 1):
                 self.aprox_box.model().item(i).setEnabled(True)
-                self.compareapprox_cb.model().item(i).setEnabled(True)
-            for i in range(Filter.BESSEL, Filter.GAUSS + 1):
-                self.aprox_box.model().item(i).setEnabled(True)
-                self.compareapprox_cb.model().item(i).setEnabled(True)
             if not self.aprox_box.model().item(self.aprox_box.currentIndex()).isEnabled():
                 self.aprox_box.setCurrentIndex(Filter.BUTTERWORTH)
-                self.compareapprox_cb.setCurrentIndex(Filter.BUTTERWORTH)
-            self.updateComparisonAproxOptions(self.aprox_box.currentIndex())
             self.define_with_box.setVisible(False)
             self.label_definewith.setVisible(False)
             self.ap_box.setVisible(True)
@@ -650,13 +652,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         elif self.tipo_box.currentIndex() == Filter.BAND_PASS or self.tipo_box.currentIndex() == Filter.BAND_REJECT:
             for i in range(Filter.LEGENDRE + 1):
                 self.aprox_box.model().item(i).setEnabled(True)
-                self.compareapprox_cb.model().item(i).setEnabled(True)
-            for i in range(Filter.BESSEL, Filter.GAUSS + 1):
-                self.aprox_box.model().item(i).setEnabled(True)
-                self.compareapprox_cb.model().item(i).setEnabled(True)
             if not self.aprox_box.model().item(self.aprox_box.currentIndex()).isEnabled():
                 self.aprox_box.setCurrentIndex(Filter.BUTTERWORTH)
-                self.compareapprox_cb.setCurrentIndex(Filter.BUTTERWORTH)
             self.define_with_box.setVisible(True)
             self.label_definewith.setVisible(True)
             self.ap_box.setVisible(True)
@@ -709,16 +706,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.symmetrize_btn.setVisible(False)
         
         elif self.tipo_box.currentIndex() == Filter.GROUP_DELAY:
+            if(self.aprox_box.currentIndex() not in [Filter.BESSEL, Filter.GAUSS]):
+                self.aprox_box.setCurrentIndex(Filter.BESSEL)
             for i in range(Filter.LEGENDRE + 1):
                 self.aprox_box.model().item(i).setEnabled(False)
-                self.compareapprox_cb.model().item(i).setEnabled(False)
-                self.compareapprox_cb.model().item(i).setChecked(False)
-            for i in range(Filter.BESSEL, Filter.GAUSS + 1):
-                self.aprox_box.model().item(i).setEnabled(True)
-                self.compareapprox_cb.model().item(i).setEnabled(True)
-            if not self.aprox_box.model().item(self.aprox_box.currentIndex()).isEnabled():
-                self.aprox_box.setCurrentIndex(Filter.BESSEL)
-                self.compareapprox_cb.setCurrentIndex(Filter.BESSEL)
             
             self.define_with_box.setVisible(False)
             self.label_definewith.setVisible(False)
@@ -751,6 +742,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.tol_box.setVisible(True)
             self.label_tolerance.setVisible(True)
             self.symmetrize_btn.setVisible(False)
+        
 
     def condition_canvas(self, canvas, xlabel, ylabel, xscale='linear', yscale='linear', grid=True):
         canvas.ax.clear()
@@ -1193,7 +1185,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         selected_poles_idx.sort(reverse=True)
         selected_zeros_idx.sort(reverse=True)
 
-        if self.selected_dataset_data.origin.addStage(selected_zeros, selected_poles, selected_gain, self.normalizationtype_cb.currentText(), self.cb_symdrl.isChecked(), False):
+        if self.selected_dataset_data.origin.addStage(selected_zeros, selected_poles, selected_gain, self.normalizationtype_cb.currentText(), self.cb_symdrl.isChecked(), self.actionForce_filter_gain.isChecked(), False):
             for z in selected_zeros_idx:
                 self.zeros_list.item(z).setFlags(Qt.ItemFlag.NoItemFlags)
             for p in selected_poles_idx:

@@ -36,7 +36,7 @@
        </font>
       </property>
       <property name="currentIndex">
-       <number>0</number>
+       <number>1</number>
       </property>
       <widget class="QWidget" name="tab">
        <attribute name="title">
@@ -1522,7 +1522,7 @@
                   <rect>
                    <x>0</x>
                    <y>0</y>
-                   <width>98</width>
+                   <width>243</width>
                    <height>446</height>
                   </rect>
                  </property>
@@ -2050,7 +2050,7 @@
                <rect>
                 <x>0</x>
                 <y>0</y>
-                <width>98</width>
+                <width>263</width>
                 <height>395</height>
                </rect>
               </property>
@@ -3276,8 +3276,15 @@
      <addaction name="actionColorsCanonical"/>
      <addaction name="actionColorsRandom"/>
     </widget>
+    <widget class="QMenu" name="menuStages">
+     <property name="title">
+      <string>Stages</string>
+     </property>
+     <addaction name="actionForce_filter_gain"/>
+    </widget>
     <addaction name="menuFrequency_units"/>
     <addaction name="menuFilter_colors"/>
+    <addaction name="menuStages"/>
    </widget>
    <addaction name="menuProject"/>
    <addaction name="menuSettings"/>
@@ -3356,6 +3363,17 @@
    </property>
    <property name="text">
     <string>Random</string>
+   </property>
+  </action>
+  <action name="actionForce_filter_gain">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Force filter gain</string>
    </property>
   </action>
  </widget>
