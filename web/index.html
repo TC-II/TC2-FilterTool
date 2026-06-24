@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/TC2-FilterTool/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FilterTool</title>
+    <!-- MathJax 3 — must load before Plotly so Plotly detects it for LaTeX labels -->
+    <script>
+      MathJax = {
+        tex: { inlineMath: [['$', '$']] },
+        svg: { fontCache: 'global' },
+        startup: { typeset: false },
+      }
+    </script>
+    <script id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
