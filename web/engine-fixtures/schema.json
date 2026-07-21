@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tc2.example/engine-fixtures.schema.json",
+  "title": "TC2 engine golden fixtures",
+  "type": "object",
+  "required": ["schemaVersion", "oracle", "tolerances", "designs", "stages", "datasets"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "oracle": {
+      "type": "object",
+      "required": ["engine", "pyodideVersion", "implementation"],
+      "properties": {
+        "engine": { "const": "Pyodide" },
+        "pyodideVersion": { "type": "string" },
+        "implementation": { "type": "string" }
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "required": ["zpk", "coefficients", "magnitude", "phaseDegrees", "groupDelaySeconds"],
+      "additionalProperties": { "$ref": "#/$defs/tolerance" }
+    },
+    "designs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "stages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "datasets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "tolerance": {
+      "type": "object",
+      "required": ["absolute", "relative"],
+      "properties": {
+        "absolute": { "type": "number", "minimum": 0 },
+        "relative": { "type": "number", "minimum": 0 }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "value": {},
+        "error": { "type": "string" },
+        "delivery": { "enum": ["value", "rejection"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "ok": { "const": true } } },
+          "then": { "required": ["value"] },
+          "else": { "required": ["error", "delivery"] }
+        }
+      ]
+    },
+    "case": {
+      "type": "object",
+      "required": ["id", "outcome"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "outcome": { "$ref": "#/$defs/outcome" }
+      }
+    }
+  }
+}

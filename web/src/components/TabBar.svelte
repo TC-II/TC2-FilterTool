@@ -3,6 +3,7 @@
 
   const TABS = [
     { id: 'magnitude',  label: 'Magnitude' },
+    { id: 'template',   label: 'Template' },
     { id: 'phase',      label: 'Phase' },
     { id: 'groupDelay', label: 'Group Delay' },
     { id: 'poleZero',   label: 'Pole-Zero' },
@@ -10,7 +11,7 @@
   ]
 </script>
 
-<nav class="tabbar" role="tablist">
+<div class="tabbar" role="tablist">
   {#each TABS as tab}
     <button
       role="tab"
@@ -21,32 +22,36 @@
       {tab.label}
     </button>
   {/each}
-</nav>
+</div>
 
 <style>
   .tabbar {
     display: flex;
     gap: 0;
-    border-bottom: 1px solid #21262d;
-    padding: 0 1rem;
-    background: #161b22;
+    border-bottom: 1px solid var(--surface-2);
+    padding: 0 0.5rem;
+    background: var(--surface);
     flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-width: 0;
   }
 
   button {
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #7d8590;
+    color: var(--text-dim);
     cursor: pointer;
-    font-size: 0.82rem;
-    padding: 0.6rem 1rem;
+    font-size: 0.88rem;
+    padding: 0.55rem 0.85rem;
     margin-bottom: -1px;
-    transition: color 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
-  button:hover { color: #c9d1d9; }
+  button:hover { color: var(--text-muted); }
   button.active {
-    color: #e6edf3;
-    border-bottom-color: #58a6ff;
+    color: var(--text);
+    border-bottom-color: var(--accent);
   }
 </style>

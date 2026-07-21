@@ -56,17 +56,20 @@
 {#if !$filterParams}
   <p class="hint">Design a filter first.</p>
 {:else}
-  <div class="mode-row">
-    <label class="mode-opt">
-      <input type="radio" bind:group={useMainN} value={false} />
-      Min N
-    </label>
-    <label class="mode-opt">
-      <input type="radio" bind:group={useMainN} value={true} />
-      Same N ({$filterResult?.N ?? '?'})
-    </label>
+  <div class="mode">
+    <span class="mode-lbl">Order</span>
+    <div class="mode-opts" role="radiogroup" aria-label="Comparison order">
+      <label class="mode-opt" class:on={!useMainN}>
+        <input type="radio" bind:group={useMainN} value={false} />
+        Min N
+      </label>
+      <label class="mode-opt" class:on={useMainN}>
+        <input type="radio" bind:group={useMainN} value={true} />
+        Same N ({$filterResult?.N ?? '?'})
+      </label>
+    </div>
     {#if computing}
-      <span class="spin" aria-hidden="true"></span>
+      <span class="spin" aria-hidden="true" title="Computing comparisons"></span>
     {/if}
   </div>
 
@@ -87,6 +90,7 @@
         </label>
       {:else}
         <div class="approx-row main-row">
+          <span class="check-spacer" aria-hidden="true"></span>
           <span class="swatch" style="background: {APPROX_COLORS[i]}"></span>
           <span class="aname">{name}</span>
           <span class="n-tag main">N={$filterResult?.N ?? '?'} ★</span>
@@ -97,30 +101,71 @@
 {/if}
 
 <style>
-  .hint { font-size: 0.78rem; color: #484f58; padding: 0.5rem 0.75rem; margin: 0; }
+  .hint {
+    font-size: 0.85rem;
+    color: var(--disabled);
+    padding: 0.5rem 0.7rem;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
 
-  .mode-row {
-    display: flex;
+  .mode {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem 0.3rem;
-    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding: 0.55rem 0.7rem 0.4rem;
+  }
+
+  .mode-lbl {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+  }
+
+  .mode-opts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.3rem;
+    min-width: 0;
   }
 
   .mode-opt {
+    position: relative;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.3rem;
-    font-size: 0.75rem;
-    color: #c9d1d9;
+    font-size: 0.82rem;
+    color: var(--text-muted);
     cursor: pointer;
     user-select: none;
+    padding: 0.35rem 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    min-width: 0;
+    text-align: center;
   }
-  .mode-opt input { accent-color: #58a6ff; cursor: pointer; }
+  .mode-opt.on {
+    border-color: var(--accent);
+    background: var(--selected);
+    color: var(--text);
+  }
+  .mode-opt input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   .spin {
-    width: 8px; height: 8px;
-    border: 1.5px solid #7d8590;
+    width: 10px; height: 10px;
+    border: 1.5px solid var(--text-dim);
     border-top-color: transparent;
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
@@ -131,38 +176,56 @@
   .approx-list {
     display: flex;
     flex-direction: column;
-    padding: 0 0.4rem 0.5rem;
+    padding: 0 0.45rem 0.55rem;
+    gap: 0.1rem;
   }
 
   .approx-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1rem 0.6rem minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.45rem;
-    padding: 0.22rem 0.35rem;
+    gap: 0.4rem;
+    padding: 0.32rem 0.4rem;
     border-radius: 4px;
     cursor: pointer;
     user-select: none;
-    font-size: 0.78rem;
-    color: #c9d1d9;
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    min-width: 0;
   }
-  .approx-row:hover:not(.main-row) { background: #21262d; }
-  .approx-row.sel { background: #1c2d4a; }
-  .approx-row input { accent-color: #58a6ff; cursor: pointer; }
+  .approx-row:hover:not(.main-row) { background: var(--surface-2); }
+  .approx-row.sel { background: var(--selected); }
+  .approx-row input {
+    accent-color: var(--accent);
+    cursor: pointer;
+    margin: 0;
+    width: 1rem;
+    height: 1rem;
+  }
 
-  .main-row { cursor: default; opacity: 0.55; }
+  .check-spacer {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .main-row { cursor: default; opacity: 0.6; }
 
   .swatch {
-    width: 8px; height: 8px;
+    width: 9px; height: 9px;
     border-radius: 50%;
     flex-shrink: 0;
+    justify-self: center;
   }
 
-  .aname { flex: 1; }
+  .aname {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 
   .n-tag {
-    font-size: 0.67rem;
-    color: #7d8590;
-    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-family: ui-monospace, 'SF Mono', Consolas, monospace;
   }
-  .n-tag.main { color: #58a6ff; }
+  .n-tag.main { color: var(--accent); }
 </style>

@@ -1,0 +1,62 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+
+      - name: Build filter-engine WASM
+        run: |
+          cargo build --release --target wasm32-unknown-unknown \
+            --target-dir target \
+            --manifest-path crates/filter-engine/Cargo.toml
+          wasm-bindgen --target web --out-dir crates/filter-engine/pkg \
+            target/wasm32-unknown-unknown/release/filter_engine.wasm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install and build web app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

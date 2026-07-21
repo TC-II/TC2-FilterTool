@@ -1,13 +1,29 @@
 import { writable, derived } from 'svelte/store'
 
+const preferredTheme = typeof window !== 'undefined'
+  ? (localStorage.getItem('filtertool.theme')
+      ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'))
+  : 'dark'
+
+export const theme = writable(preferredTheme)
+
+if (typeof window !== 'undefined') {
+  theme.subscribe(value => {
+    document.documentElement.dataset.theme = value
+    document.documentElement.style.colorScheme = value
+    localStorage.setItem('filtertool.theme', value)
+  })
+}
+
 // Runtime state
-export const pyodideReady    = writable(false)
-export const pyodideError    = writable(null)
-export const pyodideStatus   = writable('Loading Python runtime…')
-export const pyodideProgress = writable(0)    // 0–100
+export const engineReady    = writable(false)
+export const engineError    = writable(null)
+export const engineStatus   = writable('Loading WASM filter engine…')
+export const engineProgress = writable(0)    // 0–100
 
 // Active UI state
-export const activeTab = writable('magnitude')
+export const activeTab = writable('template')
+export const sidebarOpen = writable(true)
 
 // Filter design
 export const filterParams = writable(null)
@@ -41,7 +57,7 @@ export const remainingPZ = derived(
 )
 
 export const uiEnabled = derived(
-  [pyodideReady, pyodideError],
+  [engineReady, engineError],
   ([$ready, $error]) => $ready && !$error
 )
 

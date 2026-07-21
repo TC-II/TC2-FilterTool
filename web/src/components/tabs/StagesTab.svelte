@@ -1,5 +1,5 @@
 <script>
-  import { stages, filterResult, bodePoints } from '../../stores/app.js'
+  import { stages, filterResult, bodePoints, theme } from '../../stores/app.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
   import BodePlot from '../BodePlot.svelte'
 
@@ -30,15 +30,30 @@
     stageBodes = results
   }
 
-  function toDb(v) { return 20 * Math.log10(Math.max(v, 1e-12)) }
+  function toDb(v) {
+    if (!(v > 0)) return null
+    const db = 20 * Math.log10(v)
+    return Number.isFinite(db) ? db : null
+  }
 
   // Cascade = point-wise sum of stage dBs (= product of stage magnitudes).
   // Only shown when every stage has been computed.
   $: cascadeTrace = (() => {
     if (!stageBodes.length || stageBodes.length !== $stages.length || stageBodes.some(b => !b)) return null
     const freq = stageBodes[0].freq
-    const dB   = freq.map((_, i) => stageBodes.reduce((sum, sb) => sum + toDb(sb.magnitude[i]), 0))
-    return { x: freq, y: dB, mode: 'lines', name: 'Cascade', line: { color: '#e6edf3', width: 2, dash: 'dot' } }
+    const dB = freq.map((_, i) => {
+      let sum = 0
+      for (const sb of stageBodes) {
+        const v = toDb(sb.magnitude[i])
+        if (v == null) return null
+        sum += v
+      }
+      return sum
+    })
+    return {
+      x: freq, y: dB, mode: 'lines', name: 'Cascade',
+      line: { color: $theme === 'light' ? '#24292f' : '#e6edf3', width: 2, dash: 'dot' },
+    }
   })()
 
   $: traces = [
@@ -67,7 +82,15 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    padding: 2rem;
+    min-height: 0;
+    padding: 1.25rem;
   }
-  p { font-size: 0.85rem; color: #7d8590; text-align: center; }
+  p {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    text-align: left;
+    max-width: 36rem;
+    overflow-wrap: anywhere;
+    margin: 0;
+  }
 </style>

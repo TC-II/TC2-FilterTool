@@ -13,14 +13,16 @@ export const APPROX_COLORS = [
   '#8c564b',  // 6 Gauss        (matplotlib tab brown)
 ]
 
-/** Derive a ±2-decade freq range (Hz) from filter params (which use rad/s). */
+/** Derive a freq range (Hz) from filter params (which use rad/s). */
 export function freqRangeFromParams(params) {
   if (!params) return { min: 0.1, max: 1e5 }
   const TWO_PI = 2 * Math.PI
   const wp = params.wp
   let ref
+  let band = false
   if (Array.isArray(wp) && wp.length >= 2 && wp[0] > 0) {
     ref = Math.sqrt(wp[0] * wp[1]) / TWO_PI
+    band = true
   } else if (typeof wp === 'number' && wp > 0) {
     ref = wp / TWO_PI
   } else if (params.wrg > 0) {
@@ -28,5 +30,7 @@ export function freqRangeFromParams(params) {
   } else {
     return { min: 0.1, max: 1e5 }
   }
+  // Band filters use a tighter window; LP/HP/GD span ±2 decades.
+  if (band) return { min: Math.max(0.1, ref * 0.05), max: ref * 20 }
   return { min: Math.max(0.1, ref * 0.01), max: ref * 100 }
 }

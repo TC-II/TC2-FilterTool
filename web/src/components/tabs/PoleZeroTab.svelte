@@ -1,12 +1,13 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import Plotly from 'plotly.js-dist'
-  import { filterResult, filterParams, stages, remainingPZ, comparisons, pzKey } from '../../stores/app.js'
+  import { filterResult, filterParams, stages, remainingPZ, comparisons, pzKey, theme } from '../../stores/app.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
   import { APPROX_NAMES, APPROX_COLORS } from '../../lib/approx.js'
 
   let container
   let plotMounted = false
+  let resizeObserver
 
   // Selection / hover state
   let selectedKeys = new Set()
@@ -81,12 +82,9 @@
   }
 
   // ── Plotly ─────────────────────────────────────────────────────────────────
-  const C = {
-    hi:   '#e6edf3',   // selection / hover highlight (always visible against any approx color)
-    used: '#484f58',
-    unit: '#30363d',
-    grid: '#21262d', bg: '#0d1117', axis: '#444c56',
-  }
+  $: C = $theme === 'light'
+    ? { hi: '#1f2328', used: '#8c959f', unit: '#d0d7de', grid: '#d8dee4', bg: '#f6f8fa', axis: '#afb8c1' }
+    : { hi: '#e6edf3', used: '#484f58', unit: '#30363d', grid: '#21262d', bg: '#0d1117', axis: '#444c56' }
 
   $: mainColor = APPROX_COLORS[$filterParams?.approx_type ?? 0]
 
@@ -183,17 +181,22 @@
 
   const mkLayout = () => ({
     paper_bgcolor: C.bg, plot_bgcolor: C.bg,
-    font: { color: '#e6edf3', size: 11 },
+    font: { color: $theme === 'light' ? '#1f2328' : '#e6edf3', size: 12 },
     showlegend: false,
-    margin: { t: 20, b: 50, l: 60, r: 20 },
+    margin: { t: 12, b: 40, l: 48, r: 12 },
     xaxis: {
-      title: { text: 'Re(s)', font: { size: 11 } },
+      title: { text: 'Re(s)', font: { size: 12 } },
       gridcolor: C.grid, zerolinecolor: C.grid,
       scaleanchor: 'y', scaleratio: 1,
     },
     yaxis: {
-      title: { text: 'Im(s)', font: { size: 11 } },
+      title: { text: 'Im(s)', font: { size: 12 } },
       gridcolor: C.grid, zerolinecolor: C.grid,
+    },
+    modebar: {
+      color:       $theme === 'light' ? '#57606a' : '#7d8590',
+      activecolor: $theme === 'light' ? '#0969da' : '#58a6ff',
+      bgcolor:     $theme === 'light' ? 'rgba(255,255,255,0.85)' : 'rgba(22,27,34,0.85)',
     },
   })
 
@@ -204,6 +207,10 @@
     if (!container) return
     Plotly.newPlot(container, buildTraces($filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons), mkLayout(), cfg)
     plotMounted = true
+    resizeObserver = new ResizeObserver(() => {
+      if (plotMounted && container) Plotly.Plots.resize(container)
+    })
+    resizeObserver.observe(container)
   }
 
   function updatePlot() {
@@ -211,10 +218,13 @@
     Plotly.react(container, buildTraces($filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons), mkLayout(), cfg)
   }
 
-  $: updatePlot(), [$filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons]
+  $: updatePlot(), [$filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons, $theme]
 
   onMount(mountPlot)
-  onDestroy(() => { if (container) Plotly.purge(container) })
+  onDestroy(() => {
+    resizeObserver?.disconnect()
+    if (container) Plotly.purge(container)
+  })
 </script>
 
 <div class="pz-tab">
@@ -291,112 +301,142 @@
 </div>
 
 <style>
-  .pz-tab { display: flex; height: 100%; overflow: hidden; }
+  .pz-tab {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
 
-  .plot-wrap { flex: 1; min-width: 0; }
+  .plot-wrap { flex: 1; min-width: 0; min-height: 0; }
 
   .panel {
-    width: 220px;
+    width: min(260px, 42vw);
     flex-shrink: 0;
-    background: #161b22;
-    border-left: 1px solid #21262d;
+    background: var(--surface);
+    border-left: 1px solid var(--surface-2);
+    overflow-x: auto;
     overflow-y: auto;
-    padding: 0.6rem 0.5rem;
+    padding: 0.5rem 0.45rem;
     display: flex;
     flex-direction: column;
-    gap: 0.22rem;
+    gap: 0.2rem;
+    min-width: 0;
   }
 
   .sec {
-    font-size: 0.67rem;
-    color: #7d8590;
+    font-size: 0.68rem;
+    color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .sec.mt { margin-top: 0.5rem; }
+  .sec.mt { margin-top: 0.45rem; }
 
   .pz-row {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.2rem 0.3rem;
-    border-radius: 4px;
+    gap: 0.35rem;
+    padding: 0.2rem 0.25rem;
+    border-radius: 3px;
     cursor: pointer;
     user-select: none;
+    min-width: 0;
   }
-  .pz-row:hover { background: #21262d; }
-  .pz-row.hov { background: #1e2d20; }
-  .pz-row.sel { background: #1c2d4a; }
-  .pz-row.sel.hov { background: #1a3060; }
+  .pz-row:hover { background: var(--surface-2); }
+  .pz-row.hov { background: var(--success-bg); }
+  .pz-row.sel { background: var(--selected); }
+  .pz-row.sel.hov { background: var(--selected); }
 
   .pz-row input[type=checkbox] {
-    accent-color: #58a6ff;
+    accent-color: var(--accent);
     width: 13px; height: 13px;
     flex-shrink: 0; cursor: pointer;
   }
 
   .val {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.72rem;
+    font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+    font-size: 0.74rem;
     white-space: nowrap;
+    overflow: visible;
   }
 
-  .div { height: 1px; background: #21262d; margin: 0.35rem 0; }
+  .div { height: 1px; background: var(--surface-2); margin: 0.3rem 0; }
 
-  .hint { font-size: 0.78rem; color: #7d8590; text-align: center; padding: 1rem 0.5rem; }
-  .hint-sm { font-size: 0.68rem; color: #484f58; margin: 0; }
+  .hint {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 0.75rem 0.35rem;
+    overflow-wrap: anywhere;
+  }
+  .hint-sm { font-size: 0.7rem; color: var(--disabled); margin: 0; overflow-wrap: anywhere; }
 
   .warn {
-    font-size: 0.7rem; color: #d29922;
-    background: #2b2100; border-radius: 4px;
+    font-size: 0.72rem; color: var(--warning);
+    background: var(--warning-bg); border-radius: 3px;
     padding: 0.28rem 0.4rem; margin: 0;
+    overflow-wrap: anywhere;
   }
   .err {
-    font-size: 0.7rem; color: #f85149;
-    background: #2d1b1b; border-radius: 4px;
+    font-size: 0.72rem; color: var(--danger);
+    background: var(--danger-bg); border-radius: 3px;
     padding: 0.28rem 0.4rem; margin: 0;
+    overflow-wrap: anywhere;
   }
 
   .norm-row {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.35rem;
     margin-top: 0.1rem;
+    min-width: 0;
   }
-  .norm-lbl { font-size: 0.67rem; color: #7d8590; white-space: nowrap; }
+  .norm-lbl { font-size: 0.68rem; color: var(--text-dim); white-space: nowrap; }
   .norm-sel {
     flex: 1;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 4px;
-    color: #e6edf3;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
     font-size: 0.75rem;
     padding: 0.22rem 0.3rem;
     outline: none;
   }
-  .norm-sel:focus { border-color: #58a6ff; }
+  .norm-sel:focus { border-color: var(--accent); }
 
   .add-btn {
-    background: #1f6feb; border: none; border-radius: 6px;
+    background: var(--accent-strong); border: none; border-radius: 4px;
     color: #fff; cursor: pointer;
     font-size: 0.8rem; font-weight: 600;
     padding: 0.38rem; width: 100%;
-    transition: background 0.15s;
   }
-  .add-btn:hover:not(:disabled) { background: #388bfd; }
-  .add-btn:disabled { background: #21262d; color: #484f58; cursor: default; }
+  .add-btn:hover:not(:disabled) { background: var(--accent-hover); }
+  .add-btn:disabled { background: var(--surface-2); color: var(--disabled); cursor: default; }
 
   .stage-row {
     display: flex; align-items: center; gap: 0.3rem;
-    padding: 0.2rem 0.3rem; border-radius: 4px;
-    background: #1c2130;
+    padding: 0.2rem 0.3rem; border-radius: 3px;
+    background: var(--surface-2);
+    min-width: 0;
   }
-  .sname { font-size: 0.75rem; flex: 1; }
-  .sdet { font-size: 0.67rem; color: #7d8590; }
+  .sname { font-size: 0.75rem; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .sdet { font-size: 0.68rem; color: var(--text-dim); flex-shrink: 0; }
   .rm {
-    background: none; border: none; color: #7d8590;
+    background: none; border: none; color: var(--text-dim);
     cursor: pointer; font-size: 0.85rem; line-height: 1;
     padding: 0 0.1rem; border-radius: 3px;
   }
-  .rm:hover { color: #f85149; background: #2d1b1b; }
+  .rm:hover { color: var(--danger); background: var(--danger-bg); }
+
+  @media (max-width: 720px) {
+    .pz-tab { flex-direction: column; }
+    .panel {
+      width: 100%;
+      max-height: 38vh;
+      border-left: none;
+      border-top: 1px solid var(--surface-2);
+    }
+  }
 </style>

@@ -1,43 +1,75 @@
-# Svelte + Vite
+# FilterTool web app
 
-This template should help get you started developing with Svelte in Vite.
+The browser app uses the Rust/WebAssembly filter engine exclusively. It has no
+Python runtime, package CDN, or engine-selection flag. The worker API covers
+filter design, Bode response calculation, and stage construction; dataset
+parsing is outside the web cutover scope.
 
-## Recommended IDE Setup
+## Build and test
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+From `web/`:
 
-## Need an official Svelte framework?
-
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
-
-## Technical considerations
-
-**Why use this over SvelteKit?**
-
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
-
-This template contains as little as possible to get started with Vite + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
-
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
-
-**Why include `.vscode/extensions.json`?**
-
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `checkJs` in the JS template?**
-
-It is likely that most cases of changing variable types in runtime are likely to be accidental, rather than deliberate. This provides advanced typechecking out of the box. Should you like to take advantage of the dynamically-typed nature of JavaScript, it is trivial to change the configuration.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/sveltejs/svelte-hmr/tree/master/packages/svelte-hmr#preservation-of-local-state).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```js
-// store.js
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```powershell
+npm install
+npm run fixtures:test
+npm run build
 ```
+
+The checked-in golden corpus was captured from the former Pyodide engine.
+Native Rust tests execute the current implementation against those fixtures:
+
+```powershell
+cargo test --manifest-path ..\crates\filter-engine\Cargo.toml --tests
+```
+
+On Windows with MSVC, prefer:
+
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
+cmd /c "call `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat`" && cargo +stable-x86_64-pc-windows-msvc test --manifest-path crates\filter-engine\Cargo.toml --tests"
+```
+
+CI runs these same gates from `.github/workflows/filter-engine.yml`.
+
+## GitHub Pages
+
+`vite.config.js` sets `base: '/TC2-FilterTool/'` for project Pages at
+`https://<owner>.github.io/TC2-FilterTool/`.
+
+Deploy is automated by `.github/workflows/pages.yml` on pushes to `main` /
+`master` (and via **Actions → Deploy Pages → Run workflow**).
+
+One-time setup in the GitHub repo:
+
+1. **Settings → Pages → Source:** GitHub Actions
+2. Push to the default branch (or run the workflow manually)
+3. Open the Pages URL shown on the workflow run
+
+If the repository is renamed, update `base` in `vite.config.js` to match
+`/<repo-name>/`.
+
+## Payload and startup
+
+Production builds emit `filter_engine_bg-*.wasm` at about **222 KiB**
+(~71 KiB gzip). The removed Pyodide path downloaded a multi-megabyte Python
+runtime plus NumPy, SciPy, SymPy, and micropip (typically tens of megabytes
+before browser caching). Startup now fetches and instantiates one small WASM
+module instead of booting Python and loading packages, so a cold start should
+move from network/package initialization measured in seconds to a sub-second
+WASM fetch and initialization on typical broadband hardware. Exact timings
+remain device- and cache-dependent.
+
+## Rebuilding the WASM package
+
+From the repository root in PowerShell:
+
+```powershell
+rustup target add wasm32-unknown-unknown --toolchain stable-x86_64-pc-windows-msvc
+cmd /c "call `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat`" && cargo +stable-x86_64-pc-windows-msvc build --release --target wasm32-unknown-unknown --manifest-path crates\filter-engine\Cargo.toml"
+wasm-bindgen --target web --out-dir crates/filter-engine/pkg `
+  path\to\wasm32-unknown-unknown\release\filter_engine.wasm
+```
+
+No copy step is needed: `web/vite.config.js` aliases `@filter-engine` to the
+crate's generated `pkg/` directory. Vite emits its JS/WASM assets for the ES
+module worker during `npm run build`.

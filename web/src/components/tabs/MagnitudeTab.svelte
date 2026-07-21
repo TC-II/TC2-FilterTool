@@ -1,12 +1,16 @@
 <script>
-  import { bodeData, filterParams, comparisons } from '../../stores/app.js'
+  import { bodeData, filterParams, comparisons, theme } from '../../stores/app.js'
   import { APPROX_NAMES, APPROX_COLORS } from '../../lib/approx.js'
   import BodePlot from '../BodePlot.svelte'
 
-  function toDb(v) { return 20 * Math.log10(Math.max(v, 1e-12)) }
+  export let showTemplate = true
 
-  const FILL       = 'rgba(239, 154, 154, 0.12)'
-  const LINE_COLOR = 'rgba(239, 154, 154, 0.55)'
+  function toDb(v) {
+    if (!(v > 0)) return null
+    const db = 20 * Math.log10(v)
+    return Number.isFinite(db) ? db : null
+  }
+
   const TWO_PI     = 2 * Math.PI
 
   function buildTemplateShapes(params, bode) {
@@ -15,21 +19,22 @@
     const freq   = bode.freq
     const X0     = freq[0]
     const X1     = freq[freq.length - 1]
-    const dbVals = bode.magnitude.map(toDb)
-    const Y0     = Math.min(...dbVals) - 5
-    const Y1     = Math.max(...dbVals) + 5
+    const dbVals = bode.magnitude.map(toDb).filter(v => v != null)
+    const Y0     = (dbVals.length ? Math.min(...dbVals) : -100) - 5
+    const Y1     = (dbVals.length ? Math.max(...dbVals) : 0) + 5
 
     const toHz   = w => w / TWO_PI
     const gainDb = 20 * Math.log10(Math.max(params.gain ?? 1, 1e-12))
     const pbBound = gainDb - params.ap_dB
     const sbBound = gainDb - params.aa_dB
+    const fill = $theme === 'light' ? 'rgba(207, 34, 46, 0.10)' : 'rgba(239, 154, 154, 0.12)'
 
     const rect = (x0, x1, y0, y1) => ({
       type: 'rect', xref: 'x', yref: 'y', layer: 'below',
       x0: Math.max(x0, X0), x1: Math.min(x1, X1),
       y0: Math.max(y0, Y0), y1: Math.min(y1, Y1),
-      fillcolor: FILL,
-      line: { color: LINE_COLOR, width: 1 },
+      fillcolor: fill,
+      line: { width: 0 },
     })
 
     const ft = params.filter_type
@@ -62,6 +67,12 @@
     return []
   }
 
+  function buildTemplateRange(params) {
+    if (!showTemplate || !params || params.filter_type === 4) return null
+    const gainDb = 20 * Math.log10(Math.max(params.gain ?? 1, 1e-12))
+    return [gainDb - 2 * params.aa_dB, gainDb]
+  }
+
   $: traces = [
     ...($bodeData ? [{
       x: $bodeData.freq,
@@ -79,7 +90,16 @@
     })),
   ]
 
-  $: shapes = buildTemplateShapes($filterParams, $bodeData)
+  $: shapes = showTemplate ? buildTemplateShapes($filterParams, $bodeData) : []
+  $: yRange = buildTemplateRange($filterParams)
 </script>
 
-<BodePlot {traces} {shapes} xLabel="$f$ [Hz]" yLabel="$|H(f)|$ [dB]" logX={true} filename="filtool_magnitude" />
+<BodePlot
+  {traces}
+  {shapes}
+  {yRange}
+  xLabel="$f$ [Hz]"
+  yLabel="$|H(f)|$ [dB]"
+  logX={true}
+  filename={showTemplate ? 'filtool_template' : 'filtool_magnitude'}
+/>

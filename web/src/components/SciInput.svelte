@@ -63,6 +63,8 @@
   function format(num) {
     if (!isFinite(num)) return '—'
     const abs = Math.abs(num)
+    // Exact / near-zero must not pick a tiny SI prefix (0 would become "0f")
+    if (abs < 1e-15) return '0'
     // find the best prefix: largest factor where abs >= factor (with small tolerance)
     const entry = SI.find(s => abs >= s.f * 0.9995) ?? SI[SI.length - 1]
     const scaled = num / entry.f
@@ -167,51 +169,55 @@
   .sci-input {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.8rem;
+    gap: 0.15rem;
+    font-size: 0.88rem;
     flex: 1;
     min-width: 0;
+    width: 100%;
   }
   .sci-input.disabled { opacity: 0.4; pointer-events: none; }
 
   .label {
-    color: #7d8590;
-    font-size: 0.72rem;
+    color: var(--text-dim);
+    font-size: 0.8rem;
   }
 
   .input-row {
     display: flex;
     align-items: center;
-    background: #0d1117;
-    border: 1px solid #30363d;
+    background: var(--bg);
+    border: 1px solid var(--border);
     border-radius: 4px;
     overflow: hidden;
+    min-width: 0;
   }
-  .input-row:focus-within { border-color: #58a6ff; }
+  .input-row:focus-within { border-color: var(--accent); }
 
   input {
     flex: 1;
     background: transparent;
     border: none;
     outline: none;
-    color: #e6edf3;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.82rem;
-    padding: 0.3rem 0.5rem;
+    color: var(--text);
+    font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+    font-size: 0.88rem;
+    padding: 0.35rem 0.45rem;
     width: 0;
     min-width: 0;
   }
-  input.error { color: #f85149; }
+  input.error { color: var(--danger); }
 
   .unit {
-    color: #7d8590;
-    font-size: 0.72rem;
-    padding: 0 0.5rem 0 0;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    padding: 0 0.45rem 0 0;
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .error-msg {
-    color: #f85149;
-    font-size: 0.68rem;
+    color: var(--danger);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
   }
 </style>
