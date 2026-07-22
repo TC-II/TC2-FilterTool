@@ -9,7 +9,9 @@
     <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FilterTool</title>
-    <!-- MathJax 3 — must load before Plotly so Plotly detects it for LaTeX labels -->
+    <!-- MathJax 3 — must load before Plotly so Plotly detects it for LaTeX labels.
+         Use tex-svg-full so glyphs (y, t, h, …) are bundled; the slim build’s
+         dynamic font fetches fail under this app’s COEP and leave empty (). -->
     <script>
       MathJax = {
         tex: { inlineMath: [['$', '$']] },
@@ -18,7 +20,7 @@
       }
     </script>
     <script id="MathJax-script" async
-      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg-full.js">
     </script>
   </head>
   <body>

@@ -1,21 +1,26 @@
 <script>
-  import { filterParams, filterResult, comparisons, bodePoints } from '../stores/app.js'
+  import { filterParams, filterResult, comparisons, bodePoints, theme, colorMode, colorShuffle, compareApproxes, compareSameN } from '../stores/app.js'
   import { getWorkerApi } from '../lib/worker-client.js'
-  import { APPROX_NAMES, APPROX_COLORS, freqRangeFromParams } from '../lib/approx.js'
+  import { APPROX_NAMES, plotColor, freqRangeFromParams } from '../lib/approx.js'
 
-  let selectedApproxes = new Set()
-  let useMainN = false
   let computing = false
   let computeId = 0
 
   $: mainApproxType = $filterParams?.approx_type ?? -1
+  $: selectedApproxes = new Set($compareApproxes)
+
+  // Drop the main approx if it becomes selected after a redesign / load.
+  $: if (mainApproxType >= 0 && $compareApproxes.includes(mainApproxType)) {
+    compareApproxes.set($compareApproxes.filter(a => a !== mainApproxType))
+  }
 
   // Recompute whenever any dependency changes
-  $: triggerRecompute($filterParams, $filterResult, selectedApproxes, useMainN, $bodePoints)
+  $: triggerRecompute($filterParams, $filterResult, $compareApproxes, $compareSameN, $bodePoints)
 
   async function triggerRecompute(params, mainResult, selected, sameN, pts) {
     const id = ++computeId
-    if (!params || selected.size === 0) { comparisons.set([]); return }
+    const sel = selected ?? []
+    if (!params || sel.length === 0) { comparisons.set([]); return }
 
     computing = true
     try {
@@ -23,7 +28,7 @@
       const range = freqRangeFromParams(params)
 
       const results = await Promise.all(
-        [...selected].map(async (approxType) => {
+        sel.map(async (approxType) => {
           const p = { ...params, approx_type: approxType }
           if (sameN && mainResult?.N) {
             p.N_min = mainResult.N
@@ -46,10 +51,8 @@
   }
 
   function toggle(idx) {
-    const s = new Set(selectedApproxes)
-    if (s.has(idx)) s.delete(idx)
-    else s.add(idx)
-    selectedApproxes = s
+    const cur = $compareApproxes
+    compareApproxes.set(cur.includes(idx) ? cur.filter(a => a !== idx) : [...cur, idx])
   }
 </script>
 
@@ -59,12 +62,12 @@
   <div class="mode">
     <span class="mode-lbl">Order</span>
     <div class="mode-opts" role="radiogroup" aria-label="Comparison order">
-      <label class="mode-opt" class:on={!useMainN}>
-        <input type="radio" bind:group={useMainN} value={false} />
+      <label class="mode-opt" class:on={!$compareSameN}>
+        <input type="radio" bind:group={$compareSameN} value={false} />
         Min N
       </label>
-      <label class="mode-opt" class:on={useMainN}>
-        <input type="radio" bind:group={useMainN} value={true} />
+      <label class="mode-opt" class:on={$compareSameN}>
+        <input type="radio" bind:group={$compareSameN} value={true} />
         Same N ({$filterResult?.N ?? '?'})
       </label>
     </div>
@@ -82,7 +85,7 @@
             checked={selectedApproxes.has(i)}
             on:change={() => toggle(i)}
           />
-          <span class="swatch" style="background: {APPROX_COLORS[i]}"></span>
+          <span class="swatch" style="background: {plotColor(i, $theme, $colorMode, $colorShuffle)}"></span>
           <span class="aname">{name}</span>
           {#if $comparisons.find(c => c.approxType === i)}
             <span class="n-tag">N={$comparisons.find(c => c.approxType === i).filterResult.N}</span>
@@ -91,7 +94,7 @@
       {:else}
         <div class="approx-row main-row">
           <span class="check-spacer" aria-hidden="true"></span>
-          <span class="swatch" style="background: {APPROX_COLORS[i]}"></span>
+          <span class="swatch" style="background: {plotColor(i, $theme, $colorMode, $colorShuffle)}"></span>
           <span class="aname">{name}</span>
           <span class="n-tag main">N={$filterResult?.N ?? '?'} ★</span>
         </div>
@@ -141,8 +144,8 @@
     user-select: none;
     padding: 0.35rem 0.4rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
     background: var(--bg);
+    border-radius: 4px;
     min-width: 0;
     text-align: center;
   }

@@ -6,6 +6,8 @@
     { id: 'template',   label: 'Template' },
     { id: 'phase',      label: 'Phase' },
     { id: 'groupDelay', label: 'Group Delay' },
+    { id: 'step',       label: 'Step' },
+    { id: 'impulse',    label: 'Impulse' },
     { id: 'poleZero',   label: 'Pole-Zero' },
     { id: 'stages',     label: 'Stages' },
   ]

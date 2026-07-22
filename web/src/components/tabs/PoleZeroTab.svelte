@@ -1,13 +1,15 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import Plotly from 'plotly.js-dist'
-  import { filterResult, filterParams, stages, remainingPZ, comparisons, pzKey, theme } from '../../stores/app.js'
+  import { filterResult, filterParams, stages, remainingPZ, comparisons, pzKey, theme, colorMode, colorShuffle, showLegend, activeTab } from '../../stores/app.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
-  import { APPROX_NAMES, APPROX_COLORS } from '../../lib/approx.js'
+  import { APPROX_NAMES, plotColor } from '../../lib/approx.js'
 
   let container
   let plotMounted = false
+  let destroyed = false
   let resizeObserver
+  let wasActive = false
 
   // Selection / hover state
   let selectedKeys = new Set()
@@ -83,10 +85,10 @@
 
   // ── Plotly ─────────────────────────────────────────────────────────────────
   $: C = $theme === 'light'
-    ? { hi: '#1f2328', used: '#8c959f', unit: '#d0d7de', grid: '#d8dee4', bg: '#f6f8fa', axis: '#afb8c1' }
-    : { hi: '#e6edf3', used: '#484f58', unit: '#30363d', grid: '#21262d', bg: '#0d1117', axis: '#444c56' }
+    ? { hi: '#1f2328', used: '#8c959f', unit: '#d0d7de', grid: '#d8dee4', bg: '#f6f8fa', axis: '#afb8c1', zero: '#afb8c1' }
+    : { hi: '#e6edf3', used: '#484f58', unit: '#30363d', grid: '#21262d', bg: '#0d1117', axis: '#484f58', zero: '#52565c' }
 
-  $: mainColor = APPROX_COLORS[$filterParams?.approx_type ?? 0]
+  $: mainColor = plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle)
 
   function buildTraces(fr, remaining, selKeys, hovKey, mainCol, compList) {
     if (!fr) return []
@@ -94,20 +96,12 @@
       ...(remaining.zeros ?? []).map(pzKey),
       ...(remaining.poles ?? []).map(pzKey),
     ])
-    const ext = Math.max(
-      1.5,
-      ...[...fr.poles, ...fr.zeros].flatMap(([r, i]) => [Math.abs(r), Math.abs(i)]),
-    ) * 1.3
-
     const θ = Array.from({ length: 361 }, (_, i) => i * Math.PI / 180)
+    // Unit circle only — Re/Im axes come from Plotly zerolines (avoids double-thick axes).
     const out = [
       { x: θ.map(Math.cos), y: θ.map(Math.sin),
         mode: 'lines', line: { color: C.unit, width: 1, dash: 'dot' },
         hoverinfo: 'skip', showlegend: false },
-      { x: [-ext, ext], y: [0, 0], mode: 'lines',
-        line: { color: C.axis, width: 1 }, hoverinfo: 'skip', showlegend: false },
-      { x: [0, 0], y: [-ext, ext], mode: 'lines',
-        line: { color: C.axis, width: 1 }, hoverinfo: 'skip', showlegend: false },
     ]
 
     // Hover set: hovered key + its conjugate (so both of a complex pair light up)
@@ -141,7 +135,7 @@
 
     // Comparison filters drawn first (behind main filter)
     for (const comp of (compList ?? [])) {
-      const cc = APPROX_COLORS[comp.approxType]
+      const cc = plotColor(comp.approxType, $theme, $colorMode, $colorShuffle)
       const cn = APPROX_NAMES[comp.approxType]
       if (comp.filterResult.poles.length) out.push(mkX(comp.filterResult.poles, cc, 7, `${cn} poles`))
       if (comp.filterResult.zeros.length) out.push(mkO(comp.filterResult.zeros, cc, 7, `${cn} zeros`))
@@ -179,49 +173,103 @@
     }
   }
 
-  const mkLayout = () => ({
+  const mkLayout = () => {
+    const text = $theme === 'light' ? '#1f2328' : '#e6edf3'
+    const baseFont = { color: text, size: 12, family: 'system-ui, sans-serif' }
+    const tickFont = { color: text, size: 11, family: 'system-ui, sans-serif' }
+    return {
     paper_bgcolor: C.bg, plot_bgcolor: C.bg,
-    font: { color: $theme === 'light' ? '#1f2328' : '#e6edf3', size: 12 },
-    showlegend: false,
-    margin: { t: 12, b: 40, l: 48, r: 12 },
+    font: baseFont,
+    showlegend: $showLegend,
+    margin: { t: 36, b: 56, l: 64, r: 24 },
+    legend: {
+      bgcolor:     $theme === 'light' ? '#ffffff' : '#161b22',
+      bordercolor: $theme === 'light' ? '#d0d7de' : '#30363d',
+      borderwidth: 1,
+      font:        { size: 11, family: 'system-ui, sans-serif' },
+      x: 1, xanchor: 'right',
+      y: 0.98, yanchor: 'top',
+      tracegroupgap: 4,
+    },
     xaxis: {
-      title: { text: 'Re(s)', font: { size: 12 } },
-      gridcolor: C.grid, zerolinecolor: C.grid,
+      title: { text: '$\\mathrm{Re}(s)$', standoff: 8, font: baseFont },
+      gridcolor: C.grid,
+      linecolor: C.axis,
+      tickcolor: C.axis,
+      tickfont: tickFont,
+      zeroline: true,
+      zerolinecolor: C.zero,
+      zerolinewidth: 1.5,
       scaleanchor: 'y', scaleratio: 1,
     },
     yaxis: {
-      title: { text: 'Im(s)', font: { size: 12 } },
-      gridcolor: C.grid, zerolinecolor: C.grid,
+      title: { text: '$\\mathrm{Im}(s)$', standoff: 8, font: baseFont },
+      gridcolor: C.grid,
+      linecolor: C.axis,
+      tickcolor: C.axis,
+      tickfont: tickFont,
+      zeroline: true,
+      zerolinecolor: C.zero,
+      zerolinewidth: 1.5,
     },
     modebar: {
       color:       $theme === 'light' ? '#57606a' : '#7d8590',
       activecolor: $theme === 'light' ? '#0969da' : '#58a6ff',
       bgcolor:     $theme === 'light' ? 'rgba(255,255,255,0.85)' : 'rgba(22,27,34,0.85)',
     },
-  })
+  }
+  }
 
   const cfg = { responsive: true, displaylogo: false,
     toImageButtonOptions: { format: 'svg', filename: 'filtool_pz' } }
 
+  function refreshTitles() {
+    if (!plotMounted || destroyed || !container) return
+    Plotly.react(
+      container,
+      buildTraces($filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons),
+      mkLayout(),
+      cfg,
+    )
+    Plotly.Plots.resize(container)
+  }
+
+  $: if (plotMounted && $activeTab === 'poleZero' && !wasActive) {
+    wasActive = true
+    requestAnimationFrame(() => requestAnimationFrame(refreshTitles))
+  } else if ($activeTab !== 'poleZero') {
+    wasActive = false
+  }
+
   function mountPlot() {
-    if (!container) return
+    if (!container || destroyed) return
     Plotly.newPlot(container, buildTraces($filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons), mkLayout(), cfg)
     plotMounted = true
+    wasActive = $activeTab === 'poleZero'
     resizeObserver = new ResizeObserver(() => {
-      if (plotMounted && container) Plotly.Plots.resize(container)
+      if (plotMounted && !destroyed && container) Plotly.Plots.resize(container)
     })
     resizeObserver.observe(container)
+    // Layout may not be final on first paint (esp. when tab was visibility-hidden).
+    requestAnimationFrame(() => {
+      if (plotMounted && !destroyed && container) {
+        Plotly.Plots.resize(container)
+        if ($activeTab === 'poleZero') refreshTitles()
+      }
+    })
   }
 
   function updatePlot() {
-    if (!plotMounted || !container) return
+    if (!plotMounted || destroyed || !container) return
     Plotly.react(container, buildTraces($filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons), mkLayout(), cfg)
   }
 
-  $: updatePlot(), [$filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons, $theme]
+  $: updatePlot(), [$filterResult, $remainingPZ, selectedKeys, hoveredKey, mainColor, $comparisons, $theme, $colorMode, $colorShuffle, $showLegend]
 
   onMount(mountPlot)
   onDestroy(() => {
+    destroyed = true
+    plotMounted = false
     resizeObserver?.disconnect()
     if (container) Plotly.purge(container)
   })
@@ -309,7 +357,7 @@
     overflow: hidden;
   }
 
-  .plot-wrap { flex: 1; min-width: 0; min-height: 0; }
+  .plot-wrap { flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; }
 
   .panel {
     width: min(260px, 42vw);

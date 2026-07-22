@@ -1,13 +1,12 @@
 <script>
   import { getWorkerApi }  from '../lib/worker-client.js'
   import { freqRangeFromParams } from '../lib/approx.js'
-  import { filterParams, filterResult, bodeData, stages, comparisons, bodePoints, uiEnabled, engineStatus } from '../stores/app.js'
+  import { filterParams, filterResult, bodeData, stages, bodePoints, uiEnabled, engineStatus, pendingFormHydration } from '../stores/app.js'
   import SciInput from './SciInput.svelte'
 
   // ── Constants ─────────────────────────────────────────────────────────────
   const FILTER_TYPES  = ['Low-pass', 'High-pass', 'Band-pass', 'Band-reject', 'Group Delay']
   const APPROX_TYPES  = ['Butterworth', 'Chebyshev I', 'Chebyshev II', 'Cauer', 'Legendre', 'Bessel', 'Gauss']
-  const HAS_RIPPLE    = new Set([1, 2, 3])
   const TWO_PI        = 2 * Math.PI
 
   // ── Form state ────────────────────────────────────────────────────────────
@@ -31,7 +30,12 @@
   // ── Derived ───────────────────────────────────────────────────────────────
   $: isBand     = filterType === 2 || filterType === 3
   $: isGD       = filterType === 4
-  $: showRipple = HAS_RIPPLE.has(approxType)
+
+  // Apply params from Save/Load without re-running Design.
+  $: if ($pendingFormHydration) {
+    applyParamsToForm($pendingFormHydration)
+    pendingFormHydration.set(null)
+  }
 
   // ── Submit ────────────────────────────────────────────────────────────────
   let computing = false
@@ -47,7 +51,6 @@
       const result = await api.filterDesign(params)
       if (result.error) { errorMsg = result.error.split('\n').at(-2) ?? result.error; return }
       stages.set([])
-      comparisons.set([])
       filterParams.set(params)
       filterResult.set(result)
       const r = freqRangeFromParams(params)
@@ -57,6 +60,42 @@
       errorMsg = e.message
       engineStatus.set('Ready')
     } finally { computing = false }
+  }
+
+  function applyParamsToForm(p) {
+    const fromRad = w => Number(w) / TWO_PI
+    filterType = p.filter_type ?? 0
+    approxType = p.approx_type ?? 0
+    nMin = p.N_min ?? 1
+    nMax = p.N_max ?? 10
+    apDb = p.ap_dB ?? 3
+    aaDb = p.aa_dB ?? 40
+    gainDb = 20 * Math.log10(Math.max(p.gain ?? 1, 1e-12))
+    denorm = p.denorm ?? 0
+    defineWith = p.define_with ?? 1
+    gamma = p.gamma ?? 5
+    tau0 = p.tau0 ?? 1e-3
+
+    if (filterType === 4) {
+      frgHz = fromRad(p.wrg ?? 0) || 1000
+      return
+    }
+    if (filterType === 0 || filterType === 1) {
+      fpHz = fromRad(p.wp) || 1000
+      faHz = fromRad(p.wa) || 2000
+      return
+    }
+    // Band-pass / band-reject
+    if (defineWith === 1) {
+      f0Hz = fromRad(p.w0) || 1000
+      bwpHz = fromRad(p.bw?.[0]) || 200
+      bwaHz = fromRad(p.bw?.[1]) || 600
+    } else {
+      fp1Hz = fromRad(p.wp?.[0]) || 800
+      fp2Hz = fromRad(p.wp?.[1]) || 1200
+      fa1Hz = fromRad(p.wa?.[0]) || 600
+      fa2Hz = fromRad(p.wa?.[1]) || 1500
+    }
   }
 
   function buildParams() {
@@ -90,40 +129,45 @@
 
 <div class="fp">
 
-  <div class="row">
-    <span class="lbl">Type</span>
-    <select class="ctl" bind:value={filterType}>
-      {#each FILTER_TYPES as t, i}<option value={i}>{t}</option>{/each}
-    </select>
+  <div class="pair">
+    <div class="stack">
+      <span class="lbl">Type</span>
+      <select class="ctl" bind:value={filterType}>
+        {#each FILTER_TYPES as t, i}<option value={i}>{t}</option>{/each}
+      </select>
+    </div>
+    <div class="stack">
+      <span class="lbl">Approx</span>
+      <select class="ctl" bind:value={approxType}>
+        {#each APPROX_TYPES as a, i}<option value={i}>{a}</option>{/each}
+      </select>
+    </div>
   </div>
 
-  <div class="row">
-    <span class="lbl">Approx</span>
-    <select class="ctl" bind:value={approxType}>
-      {#each APPROX_TYPES as a, i}<option value={i}>{a}</option>{/each}
-    </select>
-  </div>
-
-  <div class="row">
-    <span class="lbl">N min</span>
-    <input class="ctl num" type="number" min="1" max="50" bind:value={nMin} />
-  </div>
-  <div class="row">
-    <span class="lbl">N max</span>
-    <input class="ctl num" type="number" min="1" max="50" bind:value={nMax} />
+  <div class="pair">
+    <div class="stack">
+      <span class="lbl">N min</span>
+      <input class="ctl num" type="number" min="1" max="50" bind:value={nMin} />
+    </div>
+    <div class="stack">
+      <span class="lbl">N max</span>
+      <input class="ctl num" type="number" min="1" max="50" bind:value={nMax} />
+    </div>
   </div>
 
   <div class="rule"></div>
 
   {#if !isGD}
     {#if !isBand}
-      <div class="row">
-        <span class="lbl">fp</span>
-        <SciInput bind:value={fpHz} unit="Hz" min={1e-3} max={1e12} />
-      </div>
-      <div class="row">
-        <span class="lbl">fa</span>
-        <SciInput bind:value={faHz} unit="Hz" min={1e-3} max={1e12} />
+      <div class="pair">
+        <div class="stack">
+          <span class="lbl">fp</span>
+          <SciInput bind:value={fpHz} unit="Hz" min={1e-3} max={1e12} />
+        </div>
+        <div class="stack">
+          <span class="lbl">fa</span>
+          <SciInput bind:value={faHz} unit="Hz" min={1e-3} max={1e12} />
+        </div>
       </div>
     {:else}
       <div class="row">
@@ -168,15 +212,15 @@
 
     <div class="rule"></div>
 
-    {#if showRipple}
-      <div class="row">
+    <div class="pair">
+      <div class="stack">
         <span class="lbl">Ripple</span>
         <SciInput bind:value={apDb} unit="dB" min={0.001} max={40} logNudge={false} step={0.5} />
       </div>
-    {/if}
-    <div class="row">
-      <span class="lbl">Attenuation</span>
-      <SciInput bind:value={aaDb} unit="dB" min={1} max={120} logNudge={false} step={1} />
+      <div class="stack">
+        <span class="lbl">Attenuation</span>
+        <SciInput bind:value={aaDb} unit="dB" min={1} max={120} logNudge={false} step={1} />
+      </div>
     </div>
 
   {:else}
@@ -236,6 +280,20 @@
     grid-template-columns: var(--lbl-w) minmax(0, 1fr);
     align-items: center;
     gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
     min-width: 0;
   }
 

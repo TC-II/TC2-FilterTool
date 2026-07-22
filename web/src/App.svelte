@@ -6,7 +6,8 @@
   import {
     engineReady, engineError, engineStatus, engineProgress,
     activeTab, theme, bodePoints, filterResult, filterParams, bodeData,
-    sidebarOpen, uiEnabled,
+    sidebarOpen, uiEnabled, compareDash, showLegend, colorMode, colorShuffle,
+    stages, comparisons, compareApproxes, compareSameN, pendingFormHydration,
   } from './stores/app.js'
   import LoadingBadge  from './components/LoadingBadge.svelte'
   import TabBar        from './components/TabBar.svelte'
@@ -14,10 +15,26 @@
   import MagnitudeTab  from './components/tabs/MagnitudeTab.svelte'
   import PhaseTab      from './components/tabs/PhaseTab.svelte'
   import GroupDelayTab from './components/tabs/GroupDelayTab.svelte'
+  import StepTab       from './components/tabs/StepTab.svelte'
+  import ImpulseTab    from './components/tabs/ImpulseTab.svelte'
   import PoleZeroTab   from './components/tabs/PoleZeroTab.svelte'
   import StagesTab     from './components/tabs/StagesTab.svelte'
+  import { shufflePalette } from './lib/approx.js'
+  import { serializeDesign, downloadDesign, pickDesignFile, materializeDesign } from './lib/design-io.js'
 
   const POINTS_OPTIONS = [2000, 5000, 10000, 20000, 50000, 100000]
+  const COLOR_MODE_OPTIONS = [
+    { id: 'default', label: 'Default' },
+    { id: 'gray',    label: 'Gray' },
+    { id: 'random',  label: 'Random' },
+  ]
+
+  let ioBusy = false
+  let ioError = ''
+
+  function onColorModeChange() {
+    if ($colorMode === 'random') colorShuffle.set(shufflePalette())
+  }
   // Chebyshev I / II / Cauer — dense ripples need more Bode samples at high order
   const DENSE_APPROX = new Set([1, 2, 3])
 
@@ -56,6 +73,53 @@
       const api = getWorkerApi()
       bodeData.set(await api.computeBode($filterResult.num, $filterResult.den, r.min, r.max, pts || $bodePoints))
     } catch (_) {}
+  }
+
+  function onSave() {
+    ioError = ''
+    try {
+      const doc = serializeDesign({
+        filterParams: $filterParams,
+        stages: $stages,
+        compareApproxes: $compareApproxes,
+        compareSameN: $compareSameN,
+        bodePoints: $bodePoints,
+      })
+      const ft = ['lp', 'hp', 'bp', 'br', 'gd'][$filterParams?.filter_type ?? 0] ?? 'filter'
+      downloadDesign(doc, `filtertool-${ft}-n${$filterResult?.N ?? ''}`)
+    } catch (e) {
+      ioError = e.message ?? String(e)
+    }
+  }
+
+  async function onLoad() {
+    if (ioBusy || !$uiEnabled) return
+    ioError = ''
+    ioBusy = true
+    try {
+      const { doc } = await pickDesignFile()
+      const api = getWorkerApi()
+      const applied = await materializeDesign(doc, api, s => engineStatus.set(s))
+
+      // Hydrate sidebar form first, then publish design state.
+      pendingFormHydration.set(applied.filterParams)
+      bodePoints.set(applied.bodePoints)
+      stages.set(applied.stages)
+      comparisons.set([])
+      compareSameN.set(applied.compareSameN)
+      compareApproxes.set(applied.compareApproxes)
+      filterParams.set(applied.filterParams)
+      filterResult.set(applied.filterResult)
+      bodeData.set(applied.bodeData)
+      engineStatus.set('Ready')
+    } catch (e) {
+      // User cancelled the file picker — not an error.
+      if (e?.message === 'No file selected.') return
+      ioError = e.message ?? String(e)
+      engineStatus.set('Ready')
+    } finally {
+      ioBusy = false
+    }
   }
 </script>
 
@@ -99,15 +163,55 @@
 
     <button
       class="header-btn"
+      class:active={$compareDash}
+      on:click={() => compareDash.update(v => !v)}
+      aria-pressed={$compareDash}
+      title={$compareDash ? 'Comparison traces: dashed' : 'Comparison traces: solid'}
+    >
+      {$compareDash ? 'Dashed' : 'Solid'}
+    </button>
+    <button
+      class="header-btn"
+      class:active={$showLegend}
+      on:click={() => showLegend.update(v => !v)}
+      aria-pressed={$showLegend}
+      title={$showLegend ? 'Hide plot legend' : 'Show plot legend'}
+    >
+      Legend
+    </button>
+    <label class="nav-field" title="Trace colors for main + comparisons">
+      <span class="nav-lbl">Colors</span>
+      <select class="nav-sel" bind:value={$colorMode} on:change={onColorModeChange}>
+        {#each COLOR_MODE_OPTIONS as opt}
+          <option value={opt.id}>{opt.label}</option>
+        {/each}
+      </select>
+    </label>
+
+    <button
+      class="header-btn"
       on:click={() => theme.set($theme === 'dark' ? 'light' : 'dark')}
       aria-label={`Switch to ${$theme === 'dark' ? 'light' : 'dark'} mode`}
       title={`Switch to ${$theme === 'dark' ? 'light' : 'dark'} mode`}
     >
       {$theme === 'dark' ? 'Light' : 'Dark'}
     </button>
-    <button class="header-btn" disabled>Save</button>
-    <button class="header-btn" disabled>Load</button>
+    <button
+      class="header-btn"
+      disabled={!$filterParams || ioBusy}
+      on:click={onSave}
+      title={$filterParams ? 'Save design to .ftjson' : 'Design a filter first'}
+    >Save</button>
+    <button
+      class="header-btn"
+      disabled={!$uiEnabled || ioBusy}
+      on:click={onLoad}
+      title="Load design from .ftjson"
+    >{ioBusy ? 'Loading…' : 'Load'}</button>
   </header>
+  {#if ioError}
+    <div class="io-error" role="alert">{ioError}</div>
+  {/if}
 
   <div class="body">
     <div class="sidebar-slot" class:closed={!$sidebarOpen} aria-hidden={!$sidebarOpen}>
@@ -117,19 +221,31 @@
     <div class="content">
       <TabBar />
       <div class="plot-area">
-        {#if $activeTab === 'magnitude'}
+        <!-- Keep tabs mounted so Plotly isn't remounted at 0×0 / left as a ghost. -->
+        <div class="tab-panel" class:active={$activeTab === 'magnitude'} aria-hidden={$activeTab !== 'magnitude'}>
           <MagnitudeTab showTemplate={false} />
-        {:else if $activeTab === 'template'}
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'template'} aria-hidden={$activeTab !== 'template'}>
           <MagnitudeTab showTemplate={true} />
-        {:else if $activeTab === 'phase'}
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'phase'} aria-hidden={$activeTab !== 'phase'}>
           <PhaseTab />
-        {:else if $activeTab === 'groupDelay'}
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'groupDelay'} aria-hidden={$activeTab !== 'groupDelay'}>
           <GroupDelayTab />
-        {:else if $activeTab === 'poleZero'}
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'step'} aria-hidden={$activeTab !== 'step'}>
+          <StepTab />
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'impulse'} aria-hidden={$activeTab !== 'impulse'}>
+          <ImpulseTab />
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'poleZero'} aria-hidden={$activeTab !== 'poleZero'}>
           <PoleZeroTab />
-        {:else if $activeTab === 'stages'}
+        </div>
+        <div class="tab-panel" class:active={$activeTab === 'stages'} aria-hidden={$activeTab !== 'stages'}>
           <StagesTab />
-        {/if}
+        </div>
       </div>
     </div>
   </div>
@@ -207,8 +323,22 @@
     border-color: var(--accent);
     background: var(--selected);
   }
+  .header-btn.active {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--selected);
+  }
   .icon-btn:hover, .header-btn:hover:not(:disabled) { background: var(--hover); }
   .header-btn:disabled { opacity: 0.4; cursor: default; }
+
+  .io-error {
+    flex-shrink: 0;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.82rem;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-bottom: 1px solid var(--border);
+  }
 
   .nav-field {
     display: flex;
@@ -270,10 +400,29 @@
   }
 
   .plot-area {
+    position: relative;
     flex: 1;
     min-height: 0;
     min-width: 0;
     overflow: hidden;
+  }
+
+  .tab-panel {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    /* Keep layout size for Plotly; only hide visually when inactive */
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .tab-panel.active {
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
   }
 
   @media (max-width: 720px) {

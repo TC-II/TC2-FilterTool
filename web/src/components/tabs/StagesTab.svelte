@@ -1,5 +1,5 @@
 <script>
-  import { stages, filterResult, bodePoints, theme } from '../../stores/app.js'
+  import { stages, filterResult, bodePoints, theme, activeTab } from '../../stores/app.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
   import BodePlot from '../BodePlot.svelte'
 
@@ -73,7 +73,7 @@
     <p>No stages yet — select poles/zeros in the Pole-Zero tab to build a stage decomposition.</p>
   </div>
 {:else}
-  <BodePlot {traces} yLabel="$|H(f)|$ [dB]" filename="filtool_stages" />
+  <BodePlot {traces} yLabel={'$|H(f)|$ [dB]'} filename="filtool_stages" active={$activeTab === 'stages'} />
 {/if}
 
 <style>

@@ -1,6 +1,6 @@
 <script>
-  import { bodeData, filterParams, comparisons, theme } from '../../stores/app.js'
-  import { APPROX_NAMES, APPROX_COLORS } from '../../lib/approx.js'
+  import { bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab } from '../../stores/app.js'
+  import { APPROX_NAMES, plotColor, compareLine } from '../../lib/approx.js'
   import BodePlot from '../BodePlot.svelte'
 
   export let showTemplate = true
@@ -11,7 +11,7 @@
     return Number.isFinite(db) ? db : null
   }
 
-  const TWO_PI     = 2 * Math.PI
+  const TWO_PI = 2 * Math.PI
 
   function buildTemplateShapes(params, bode) {
     if (!params || !bode || params.filter_type === 4) return []
@@ -27,7 +27,10 @@
     const gainDb = 20 * Math.log10(Math.max(params.gain ?? 1, 1e-12))
     const pbBound = gainDb - params.ap_dB
     const sbBound = gainDb - params.aa_dB
-    const fill = $theme === 'light' ? 'rgba(207, 34, 46, 0.10)' : 'rgba(239, 154, 154, 0.12)'
+    // Soft pink on light (desktop #ffcccb); clear red tint on dark (pastel pink goes muddy)
+    const fill = $theme === 'light'
+      ? 'rgba(255, 204, 203, 0.45)'
+      : 'rgba(248, 81, 73, 0.16)'
 
     const rect = (x0, x1, y0, y1) => ({
       type: 'rect', xref: 'x', yref: 'y', layer: 'below',
@@ -79,14 +82,14 @@
       y: $bodeData.magnitude.map(toDb),
       mode: 'lines',
       name: APPROX_NAMES[$filterParams?.approx_type ?? 0],
-      line: { color: APPROX_COLORS[$filterParams?.approx_type ?? 0], width: 2 },
+      line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
     }] : []),
     ...$comparisons.map(c => ({
       x: c.bodeData.freq,
       y: c.bodeData.magnitude.map(toDb),
       mode: 'lines',
       name: APPROX_NAMES[c.approxType],
-      line: { color: APPROX_COLORS[c.approxType], width: 1.5, dash: 'dash' },
+      line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
     })),
   ]
 
@@ -98,8 +101,9 @@
   {traces}
   {shapes}
   {yRange}
-  xLabel="$f$ [Hz]"
-  yLabel="$|H(f)|$ [dB]"
+  xLabel={'$f$ [Hz]'}
+  yLabel={'$|H(f)|$ [dB]'}
   logX={true}
   filename={showTemplate ? 'filtool_template' : 'filtool_magnitude'}
+  active={$activeTab === (showTemplate ? 'template' : 'magnitude')}
 />

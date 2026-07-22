@@ -19,8 +19,8 @@
   --success-bg: #0d2016;
   --warning: #d29922;
   --warning-bg: #2b2100;
-  --template-fill: rgba(239, 154, 154, 0.12);
-  --template-line: rgba(239, 154, 154, 0.55);
+  --template-fill: rgba(248, 81, 73, 0.16);
+  --template-line: rgba(248, 81, 73, 0.45);
 }
 
 :root[data-theme='light'] {
@@ -43,8 +43,8 @@
   --success-bg: #dafbe1;
   --warning: #9a6700;
   --warning-bg: #fff8c5;
-  --template-fill: rgba(207, 34, 46, 0.10);
-  --template-line: rgba(207, 34, 46, 0.50);
+  --template-fill: rgba(255, 204, 203, 0.45);
+  --template-line: rgba(239, 154, 154, 0.55);
 }
 
 html, body {

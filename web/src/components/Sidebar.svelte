@@ -6,12 +6,10 @@
 
 <aside class="sidebar" class:disabled={!$uiEnabled}>
   <section class="section">
-    <h3 class="section-title">Filter Design</h3>
     <FilterPanel />
   </section>
 
   <section class="section">
-    <h3 class="section-title">Compare</h3>
     <ComparePanel />
   </section>
 </aside>
@@ -36,15 +34,6 @@
 
   .section {
     border-bottom: 1px solid var(--surface-2);
-  }
-  .section-title {
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    margin: 0;
-    padding: 0.6rem 0.7rem 0.35rem;
   }
 
   @media (max-width: 720px) {
