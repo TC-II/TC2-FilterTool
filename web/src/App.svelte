@@ -8,7 +8,7 @@
     activeTab, theme, bodePoints, filterResult, filterParams, bodeData,
     sidebarOpen, uiEnabled, compareDash, showLegend, colorMode, colorShuffle,
     stages, comparisons, compareApproxes, compareSameN, pendingFormHydration,
-    plotCursor, dataUnit, plotUnit,
+    plotCursor, dataUnit, plotUnit, gameMode,
   } from './stores/app.js'
   import LoadingBadge  from './components/LoadingBadge.svelte'
   import TabBar        from './components/TabBar.svelte'
@@ -21,6 +21,8 @@
   import PoleZeroTab   from './components/tabs/PoleZeroTab.svelte'
   import StagesTab     from './components/tabs/StagesTab.svelte'
   import Toast         from './components/Toast.svelte'
+  import GameMode      from './components/game/GameMode.svelte'
+  import { playEnter, playExit, initMascot } from './lib/game/transition.js'
   import { runDesign, startLiveMode } from './lib/design-action.js'
   import { removeStage } from './lib/stages.js'
   import { hoveredStageId } from './stores/app.js'
@@ -60,6 +62,7 @@
   const typing = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
     (el.tagName === 'INPUT' && !NON_TEXT.has(el.type)))
   function onKeydown(e) {
+    if ($gameMode) return            // the game has its own keys
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       if ($uiEnabled) runDesign()
@@ -72,11 +75,24 @@
     }
   }
 
+  // ── Game mode ────────────────────────────────────────────────────────────
+  // The designer stays mounted underneath (its state survives a game).
+  function enterGame() {
+    if ($gameMode || !$uiEnabled) return
+    playEnter(() => gameMode.set(true))
+  }
+  function exitGame() {
+    if (!$gameMode) return
+    playExit(() => gameMode.set(false))
+  }
+
   let stopLive = null
   onDestroy(() => stopLive?.())
 
   onMount(async () => {
     stopLive = startLiveMode()
+    // Warm the mascot sprites so the first Game press animates right away
+    setTimeout(() => initMascot(), 1500)
     try {
       const api = getWorkerApi()
       await api.init(
@@ -170,6 +186,14 @@
     <img class="logo-icon" src="{import.meta.env.BASE_URL}favicon-48x48.png" width="28" height="28" alt="" />
     <span class="logo">FilterTool</span>
     <LoadingBadge />
+    <button
+      class="header-btn game-btn"
+      disabled={!$uiEnabled}
+      on:click={enterGame}
+      title="Game mode: guess the approximation, type and order from a plot"
+    >
+      <span class="game-ico" aria-hidden="true"></span>GAME
+    </button>
     <div class="header-spacer"></div>
 
     <label
@@ -310,6 +334,10 @@
   </div>
 </div>
 
+{#if $gameMode}
+  <GameMode on:exit={exitGame} />
+{/if}
+
 <svelte:window on:keydown={onKeydown} />
 <Toast />
 
@@ -392,6 +420,36 @@
   }
   .icon-btn:hover, .header-btn:hover:not(:disabled) { background: var(--hover); }
   .header-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* Game mode entry: pixel-font, neandertool colours */
+  .game-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-family: 'Press Start 2P', 'Courier New', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+    color: #fff;
+    background: #0d2035;
+    border: 2px solid #8d6e63;
+    border-radius: 0;
+    box-shadow: 3px 3px 0 #5d4037;
+    padding: 0.4rem 0.6rem 0.35rem;
+  }
+  .game-btn:hover:not(:disabled) { background: #0d2035; border-color: #00bcd4; color: #00bcd4; }
+  .game-btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #5d4037; }
+  .game-ico {
+    width: 8px;
+    height: 8px;
+    background: #ff9800;
+    box-shadow: 0 0 0 2px #5d4037;
+    animation: game-coin 1.2s steps(4, end) infinite;
+  }
+  @keyframes game-coin {
+    0%, 100% { transform: scaleX(1); }
+    50% { transform: scaleX(0.2); }
+  }
+  @media (prefers-reduced-motion: reduce) { .game-ico { animation: none; } }
 
   .theme-btn {
     display: inline-flex;

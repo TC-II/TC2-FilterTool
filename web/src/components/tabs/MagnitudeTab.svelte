@@ -549,7 +549,7 @@
     return c.ok ? s : `${s} @ ${formatSI(c.at * uf)} ${$dataUnit === 'rad' ? 'rad/s' : 'Hz'}`
   }
 
-  $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|$ [dB]' : '$|H(f)|$ [dB]'
+  $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$'
   $: uirevision = showTemplate ? `tpl-${$designForm.filterType}-${$plotUnit}` : undefined
 </script>
 

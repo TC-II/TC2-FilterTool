@@ -1,0 +1,32 @@
+{
+  "revision": 2,
+  "frameWidth": 96,
+  "frameHeight": 112,
+  "groundY": 107,
+  "animations": {
+    "idle": {
+      "file": "idle.png",
+      "frames": 16,
+      "fps": 8,
+      "loop": true
+    },
+    "greet": {
+      "file": "greet.png",
+      "frames": 24,
+      "fps": 12,
+      "loop": false
+    },
+    "celebrate": {
+      "file": "celebrate.png",
+      "frames": 12,
+      "fps": 12,
+      "loop": true
+    },
+    "exit": {
+      "file": "exit.png",
+      "frames": 12,
+      "fps": 14,
+      "loop": false
+    }
+  }
+}

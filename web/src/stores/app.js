@@ -79,6 +79,8 @@ export const engineProgress = writable(0)    // 0–100
 // Active UI state
 export const activeTab = writable('template')
 export const sidebarOpen = writable(true)
+/** Game mode (quiz) is showing instead of the designer. */
+export const gameMode = writable(false)
 
 /** Live design form (FilterPanel; later the template handles). Frequencies in the data unit. */
 export const designForm = writable({ ...DEFAULT_FORM })

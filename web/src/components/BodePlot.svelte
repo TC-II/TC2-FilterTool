@@ -4,7 +4,7 @@
   import { theme, showLegend, plotCursor } from '../stores/app.js'
 
   export let traces    = []
-  export let xLabel    = '$f$ [Hz]'
+  export let xLabel    = '$f\\ [\\mathrm{Hz}]$'
   export let yLabel    = ''
   export let logX      = true
   export let filename  = 'filtool_plot'
@@ -18,6 +18,10 @@
   export let yDtick    = null
   /** When false (inactive keep-alive tab), skip Plotly work; rising edge re-typesets MathJax. */
   export let active    = true
+  /** Optional color overrides (keys of plotColors()), e.g. the game mode's retro palette. */
+  export let palette   = null
+  /** Thumbnail: tight margins, no axis titles, legend, mode bar or export button; not interactive. */
+  export let compact   = false
 
   const dispatch = createEventDispatcher()
   let container
@@ -34,7 +38,7 @@
 
   function plotColors() {
     const light = $theme === 'light'
-    return {
+    const base = {
       background: light ? '#f6f8fa' : '#0d1117',
       text:       light ? '#24292f' : '#e6edf3',
       grid:       light ? '#d8dee4' : '#30363d',
@@ -47,6 +51,7 @@
       // Cursor crosshair: Plotly's default is a 1 px dotted #444, barely visible
       spike:          light ? '#57606a' : '#8b949e',
     }
+    return palette ? { ...base, ...palette } : base
   }
 
   function makeLayout() {
@@ -55,27 +60,27 @@
       paper_bgcolor: colors.background,
       plot_bgcolor:  colors.background,
       font:          { color: colors.text, size: 12, family: 'system-ui, sans-serif' },
-      margin:        { l: 64, r: 24, t: 36, b: 56 },
+      margin:        compact ? { l: 40, r: 8, t: 8, b: 24 } : { l: 64, r: 24, t: 36, b: 56 },
       ...(uirevision !== undefined ? { uirevision } : {}),
       xaxis: {
         type:          logX ? 'log' : 'linear',
         ...(xRange ? { range: logX ? xRange.map(Math.log10) : xRange, autorange: false } : { autorange: true }),
-        title:         { text: xLabel, standoff: 8, font: { color: colors.text, size: 12 } },
+        title:         compact ? undefined : { text: xLabel, standoff: 8, font: { color: colors.text, size: 12 } },
         gridcolor:     colors.grid,
         linecolor:     colors.line,
         zerolinecolor: colors.line,
         tickcolor:     colors.line,
-        tickfont:      { color: colors.text, size: 11 },
+        tickfont:      { color: colors.text, size: compact ? 9 : 11 },
         showspikes: true, spikemode: 'across', spikesnap: 'cursor',
         spikecolor: colors.spike, spikethickness: 1.5, spikedash: 'dash',
       },
       yaxis: {
-        title:         { text: yLabel, standoff: 8, font: { color: colors.text, size: 12 } },
+        title:         compact ? undefined : { text: yLabel, standoff: 8, font: { color: colors.text, size: 12 } },
         gridcolor:     colors.grid,
         linecolor:     colors.line,
         zerolinecolor: colors.line,
         tickcolor:     colors.line,
-        tickfont:      { color: colors.text, size: 11 },
+        tickfont:      { color: colors.text, size: compact ? 9 : 11 },
         ...(yRange ? { range: yRange, autorange: false } : { autorange: true }),
         ...(yDtick != null ? { dtick: yDtick, tick0: 0 } : {}),
       },
@@ -88,8 +93,8 @@
         y: 0.98, yanchor: 'top',
         tracegroupgap: 4,
       },
-      showlegend: $showLegend,
-      hovermode: $plotCursor ? 'x unified' : false,
+      showlegend: !compact && $showLegend,
+      hovermode: !compact && $plotCursor ? 'x unified' : false,
       modebar: {
         color:       colors.modebar,
         activecolor: colors.modebarActive,
@@ -102,7 +107,8 @@
   const CONFIG = {
     responsive:    true,
     displaylogo:   false,
-    displayModeBar: true,
+    displayModeBar: !compact,
+    staticPlot:    compact,
     modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
     toImageButtonOptions: { format: 'svg', filename },
   }
@@ -256,9 +262,11 @@
 <div class="plot-wrap">
   <div bind:this={container} class="plot-div"></div>
   <slot />
-  <button class="export-btn" on:click={exportSVG} title="Export as SVG">
-    SVG
-  </button>
+  {#if !compact}
+    <button class="export-btn" on:click={exportSVG} title="Export as SVG">
+      SVG
+    </button>
+  {/if}
 </div>
 
 <style>

@@ -1,3 +1,7 @@
 *.pyc
 *.fto
 venv/
+
+# Claude (Cowork / Claude Code): local settings and saved screenshots
+.claude/
+Claude outputs/

@@ -33,6 +33,11 @@
    * (drag previews): [{ re, im, symbol: 'x' | 'o', color, size }] in rad/s, or null.
    */
   export let overlayMarkers = null
+  /**
+   * Text labels pinned to s-plane points: [{ re, im, text, color?, font?, xshift?, yshift? }]
+   * in rad/s (e.g. root multiplicities).
+   */
+  export let annotations = []
 
   const dispatch = createEventDispatcher()
   let overlay
@@ -49,9 +54,15 @@
 
   $: resetKey, (frozen = null)
 
-  $: C = $theme === 'light'
-    ? { unit: '#d0d7de', grid: '#d8dee4', bg: '#f6f8fa', axis: '#afb8c1', zero: '#afb8c1', text: '#1f2328' }
-    : { unit: '#30363d', grid: '#21262d', bg: '#0d1117', axis: '#484f58', zero: '#52565c', text: '#e6edf3' }
+  /** Optional color overrides (keys of C, plus legend / legendBorder), e.g. the game mode's palette. */
+  export let palette = null
+
+  $: C = {
+    ...($theme === 'light'
+      ? { unit: '#d0d7de', grid: '#d8dee4', bg: '#f6f8fa', axis: '#afb8c1', zero: '#afb8c1', text: '#1f2328', legend: '#ffffff', legendBorder: '#d0d7de' }
+      : { unit: '#30363d', grid: '#21262d', bg: '#0d1117', axis: '#484f58', zero: '#52565c', text: '#e6edf3', legend: '#161b22', legendBorder: '#30363d' }),
+    ...(palette ?? {}),
+  }
 
   function buildTraces() {
     const out = []
@@ -95,12 +106,18 @@
       margin: compact ? { t: 8, b: 28, l: 44, r: 8 } : { t: 36, b: 56, l: 64, r: 24 },
       uirevision: resetKey ?? 'pz',
       legend: {
-        bgcolor: $theme === 'light' ? '#ffffff' : '#161b22',
-        bordercolor: $theme === 'light' ? '#d0d7de' : '#30363d',
+        bgcolor: C.legend,
+        bordercolor: C.legendBorder,
         borderwidth: 1, font: { size: 11, family: 'system-ui, sans-serif' },
         x: 1, xanchor: 'right', y: 0.98, yanchor: 'top', tracegroupgap: 4,
       },
       hovermode: $plotCursor ? 'closest' : false,
+      annotations: (annotations ?? []).map(a => ({
+        x: a.re * scale, y: a.im * scale, xref: 'x', yref: 'y',
+        text: a.text, showarrow: false,
+        xshift: a.xshift ?? 12, yshift: a.yshift ?? 12,
+        font: { color: a.color ?? C.text, size: 13, ...(a.font ?? {}) },
+      })),
       xaxis: { ...ax(xLabel, frozen?.x), scaleanchor: 'y', scaleratio: 1 },
       yaxis: ax(yLabel, frozen?.y),
       modebar: {
@@ -112,7 +129,7 @@
   }
 
   const cfg = () => ({
-    responsive: true, displaylogo: false, displayModeBar: !compact,
+    responsive: true, displaylogo: false, displayModeBar: !compact, staticPlot: compact,
     toImageButtonOptions: { format: 'svg', filename },
   })
 
@@ -169,7 +186,7 @@
     refreshTimer = setTimeout(() => { refreshTimer = null; refresh() }, ms)
   }
 
-  $: if (initialized) schedule(), [groups, scale, C, $showLegend, $plotCursor, frozen, xLabel, yLabel, resetKey]
+  $: if (initialized) schedule(), [groups, annotations, scale, C, $showLegend, $plotCursor, frozen, xLabel, yLabel, resetKey]
 
   $: if (initialized && active && !wasActive) {
     wasActive = true

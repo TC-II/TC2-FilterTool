@@ -164,12 +164,13 @@ export const IMPULSE_Y_LABEL = '$h(t)$'
  */
 export function pickTimeUnit(tEndSeconds) {
   const t = Number.isFinite(tEndSeconds) && tEndSeconds > 0 ? tEndSeconds : 1
+  // Whole label in math mode: Plotly drops text outside $…$.
   // Concatenate so tooling/Svelte never sees a bare `$t` store token.
-  const tVar = '$' + 't$'
-  if (t >= 1) return { scale: 1, unit: 's', xLabel: `${tVar} [s]` }
-  if (t >= 1e-3) return { scale: 1e3, unit: 'ms', xLabel: `${tVar} [ms]` }
-  if (t >= 1e-6) return { scale: 1e6, unit: 'µs', xLabel: `${tVar} [µs]` }
-  return { scale: 1e9, unit: 'ns', xLabel: `${tVar} [ns]` }
+  const tLabel = unit => '$' + `t\\ [${unit}]$`
+  if (t >= 1) return { scale: 1, unit: 's', xLabel: tLabel('\\mathrm{s}') }
+  if (t >= 1e-3) return { scale: 1e3, unit: 'ms', xLabel: tLabel('\\mathrm{ms}') }
+  if (t >= 1e-6) return { scale: 1e6, unit: 'µs', xLabel: tLabel('\\mu\\mathrm{s}') }
+  return { scale: 1e9, unit: 'ns', xLabel: tLabel('\\mathrm{ns}') }
 }
 
 /** Scale a { time, value } response into the chosen unit. */

@@ -44,7 +44,7 @@
   ]
 
   $: yDtick = phaseDtick(traces)
-  $: yLabel = $plotUnit === 'rad' ? '$\\angle H(\\omega)$ [°]' : '$\\angle H(f)$ [°]'
+  $: yLabel = $plotUnit === 'rad' ? '$\\angle H(\\omega)\\ [^\\circ]$' : '$\\angle H(f)\\ [^\\circ]$'
 </script>
 
 <BodePlot

@@ -78,8 +78,8 @@ export const TWO_PI = 2 * Math.PI
  */
 export function freqAxis(unit) {
   return unit === 'rad'
-    ? { scale: TWO_PI, sScale: 1,          xLabel: '$\\omega$ [rad/s]', unit: 'rad/s' }
-    : { scale: 1,      sScale: 1 / TWO_PI, xLabel: '$f$ [Hz]',          unit: 'Hz' }
+    ? { scale: TWO_PI, sScale: 1,          xLabel: '$\\omega\\ [\\mathrm{rad/s}]$', unit: 'rad/s' }
+    : { scale: 1,      sScale: 1 / TWO_PI, xLabel: '$f\\ [\\mathrm{Hz}]$', unit: 'Hz' }
 }
 
 /**
@@ -91,13 +91,13 @@ export function sPlaneAxis(unit) {
   return unit === 'rad'
     ? {
         scale: 1, unit: 'rad/s',
-        xLabel: '$\\mathrm{Re}(s)$ [rad/s]',
-        yLabel: '$\\mathrm{Im}(s)$ [rad/s]',
+        xLabel: '$\\mathrm{Re}(s)\\ [\\mathrm{rad/s}]$',
+        yLabel: '$\\mathrm{Im}(s)\\ [\\mathrm{rad/s}]$',
       }
     : {
         scale: 1 / TWO_PI, unit: 'Hz',
-        xLabel: '$\\mathrm{Re}(s)/2\\pi$ [Hz]',
-        yLabel: '$\\mathrm{Im}(s)/2\\pi$ [Hz]',
+        xLabel: '$\\mathrm{Re}(s)/2\\pi\\ [\\mathrm{Hz}]$',
+        yLabel: '$\\mathrm{Im}(s)/2\\pi\\ [\\mathrm{Hz}]$',
       }
 }
 

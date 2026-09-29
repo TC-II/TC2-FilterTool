@@ -445,7 +445,7 @@
     try { await autoStage() } finally { autoBusy = false }
   }
 
-  $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|$ [dB]' : '$|H(f)|$ [dB]'
+  $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$'
   $: xRange = [freqRange.min * axis.scale, freqRange.max * axis.scale]
 </script>
 
