@@ -13,7 +13,8 @@
   import Plotly from 'plotly.js-dist'
   import { theme, showLegend, plotCursor, lang } from '../stores/app.js'
   import { beginPlotWork } from '../lib/plot-activity.js'
-  import { plotlyLocale } from './BodePlot.svelte'
+  import { setHome } from '../lib/plot-home.js'
+  import { plotlyLocale, MODEBAR_REMOVE } from './BodePlot.svelte'
 
   export let groups = []
   export let scale = 1
@@ -140,7 +141,8 @@
 
   const cfg = () => ({
     locale: plotlyLocale($lang),
-    responsive: true, displaylogo: false, displayModeBar: !compact, staticPlot: compact,
+    responsive: true, displaylogo: false, displayModeBar: !compact, staticPlot: compact, doubleClick: 'reset',
+    modeBarButtonsToRemove: MODEBAR_REMOVE,
     toImageButtonOptions: { format: 'svg', filename },
   })
 
@@ -150,6 +152,8 @@
 
   let staleWhileHidden = false
 
+  let homeKey = null
+
   async function refresh() {
     if (initialized && !active) { staleWhileHidden = true; return }
     if (!initialized || destroyed || !container || !active) return
@@ -158,6 +162,9 @@
     if (token !== refreshToken || destroyed || !container || !active) return
     await Plotly.react(container, buildTraces(), makeLayout(), cfg())
     if (token !== refreshToken || destroyed) return
+    // Home / double-click: the frozen view when there is one, else fit (lib/plot-home.js)
+    const key = `${JSON.stringify(frozen)}|${scale}`
+    if (key !== homeKey) { homeKey = key; setHome(container, { xaxis: !!frozen, yaxis: !!frozen }) }
     if (stickyRange && !frozen && groups.some(g => g.roots?.length)) {
       const ax = axes()
       if (ax) frozen = { x: ax.xa.range.slice(), y: ax.ya.range.slice() }

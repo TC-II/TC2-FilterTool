@@ -88,7 +88,11 @@
       : freqRangeFromParams(formValid ? buildParams($designForm, toRad) : $filterParams)
     xRange = showTemplate ? [fr.min * axis.scale, fr.max * axis.scale] : null
     const f = formValid ? $designForm : null
-    yRange = showTemplate && f && f.filterType !== GD ? [f.gainDb - 2 * f.aaDb, f.gainDb] : null
+    // Template: down to 2·Aa below the gain; Magnitude: 3·Aa (deep stopbands
+    // otherwise autorange to −300 dB and flatten everything that matters)
+    yRange = f && f.filterType !== GD
+      ? (showTemplate ? [f.gainDb - 2 * f.aaDb, f.gainDb] : [f.gainDb - 3 * f.aaDb, f.gainDb + 3])
+      : null
   }
 
   // ── Traces (untouched while dragging: only shapes move) ──────────────────

@@ -497,7 +497,11 @@
     // Fit only once every stage curve is in (their Bodes arrive asynchronously)
     if (pendingBode.size || $stages.some(st => !bodes.get(st.id)?.bode)) return
     const r = gd._fullLayout?.yaxis?.range
-    if (r?.every(Number.isFinite)) stickyY = r.slice()
+    if (!r?.every(Number.isFinite)) return
+    // Deep stopbands: stop 3·Aa below the gain (as the Magnitude tab)
+    const p = $filterParams
+    const floor = p && p.filter_type !== 4 && p.aa_dB > 0 ? 20 * Math.log10(p.gain || 1) - 3 * p.aa_dB : -Infinity
+    stickyY = [Math.max(r[0], floor), r[1]]
   }
 </script>
 

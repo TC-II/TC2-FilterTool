@@ -1,8 +1,19 @@
 <script module>
   import Plotly from 'plotly.js-dist'
 
-  // Spanish mode-bar tooltips for Plotly. Only the dictionary: number
-  // formatting stays Plotly's default (decimal dot), as in the form inputs.
+  // Mode-bar tooltips for Plotly, with the mouse shortcuts spelled out (Shift
+  // swaps zoom box / pan while dragging; double-click resets the axes). Only
+  // the dictionary: number formatting stays Plotly's default (decimal dot).
+  const PLOTLY_EN = {
+    moduleType: 'locale',
+    name: 'en-ft',
+    dictionary: {
+      'Zoom': 'Zoom: drag a box (hold Shift to pan)',
+      'Pan': 'Pan: drag (hold Shift to zoom a box)',
+      'Reset axes': 'Reset axes (or double-click the plot)',
+      'Reset view': 'Reset view (or double-click the plot)',
+    },
+  }
   const PLOTLY_ES = {
     moduleType: 'locale',
     name: 'es',
@@ -16,27 +27,30 @@
       'Double-click to zoom back out': 'Doble clic para volver a alejar',
       'Download plot': 'Descargar gráfico',
       'Download plot as a png': 'Descargar gráfico como png',
-      'Pan': 'Desplazar',
-      'Reset axes': 'Restablecer ejes',
-      'Reset view': 'Restablecer vista',
-      'Zoom': 'Zoom',
+      'Pan': 'Desplazar: arrastre (con Shift, zoom con un recuadro)',
+      'Reset axes': 'Restablecer ejes (o doble clic en el gráfico)',
+      'Reset view': 'Restablecer vista (o doble clic en el gráfico)',
+      'Zoom': 'Zoom: arrastre un recuadro (con Shift, desplazar)',
       'Zoom in': 'Acercar',
       'Zoom out': 'Alejar',
     },
   }
   let registered = false
-  /** Plotly `config.locale` for a UI language (registers the Spanish dictionary once). */
+  /** Plotly `config.locale` for a UI language (registers the dictionaries once). */
   export function plotlyLocale(lang) {
-    if (lang !== 'es') return 'en'
-    if (!registered) { Plotly.register(PLOTLY_ES); registered = true }
-    return 'es'
+    if (!registered) { Plotly.register(PLOTLY_EN); Plotly.register(PLOTLY_ES); registered = true }
+    return lang === 'es' ? 'es' : 'en-ft'
   }
+
+  /** Mode-bar buttons no FilterTool plot uses (selection tools, autoscale ≈ home). */
+  export const MODEBAR_REMOVE = ['select2d', 'lasso2d', 'autoScale2d']
 </script>
 
 <script>
   import { onMount, onDestroy, afterUpdate, createEventDispatcher } from 'svelte'
   import { theme, showLegend, plotCursor, lang } from '../stores/app.js'
   import { beginPlotWork } from '../lib/plot-activity.js'
+  import { setHome } from '../lib/plot-home.js'
 
   const EXPORT_TITLE = { en: 'Export as SVG', es: 'Exportar como SVG' }
 
@@ -146,9 +160,11 @@
     locale:        plotlyLocale($lang),
     responsive:    true,
     displaylogo:   false,
+    // Double-click always goes Home (Plotly's default alternates with "fit all")
+    doubleClick:   'reset',
     displayModeBar: !compact,
     staticPlot:    compact,
-    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+    modeBarButtonsToRemove: MODEBAR_REMOVE,
     toImageButtonOptions: { format: 'svg', filename },
   }
 
@@ -159,6 +175,15 @@
     } catch { /* MathJax optional */ }
   }
 
+  // Home / double-click go to the ranges this plot was last given (lib/plot-home.js)
+  let homeKey = null
+  function syncHome() {
+    const key = `${xRange?.join(',')}|${yRange?.join(',')}|${logX}|${uirevision}`
+    if (key === homeKey) return
+    homeKey = key
+    setHome(container, { xaxis: !!xRange, yaxis: !!yRange })
+  }
+
   async function refreshPlot() {
     if (!initialized || destroyed || !container || !active) return
     const token = ++refreshToken
@@ -166,6 +191,7 @@
     if (token !== refreshToken || destroyed || !container || !active) return
     await Plotly.react(container, traces, makeLayout(), CONFIG)
     if (token !== refreshToken || destroyed || !container || !active) return
+    syncHome()
     Plotly.Plots.resize(container)
     dispatch('rendered')
   }
