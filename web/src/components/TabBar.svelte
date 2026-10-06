@@ -1,16 +1,12 @@
 <script>
-  import { activeTab } from '../stores/app.js'
+  import { activeTab, lang } from '../stores/app.js'
 
-  const TABS = [
-    { id: 'magnitude',  label: 'Magnitude' },
-    { id: 'template',   label: 'Template' },
-    { id: 'phase',      label: 'Phase' },
-    { id: 'groupDelay', label: 'Group Delay' },
-    { id: 'step',       label: 'Step' },
-    { id: 'impulse',    label: 'Impulse' },
-    { id: 'poleZero',   label: 'Pole-Zero' },
-    { id: 'stages',     label: 'Stages' },
-  ]
+  const TAB_IDS = ['magnitude', 'template', 'phase', 'groupDelay', 'step', 'impulse', 'poleZero', 'stages']
+  const LABELS = {
+    en: ['Magnitude', 'Template', 'Phase', 'Group Delay', 'Step', 'Impulse', 'Pole-Zero', 'Stages'],
+    es: ['Módulo', 'Plantilla', 'Fase', 'Retardo de grupo', 'Escalón', 'Impulso', 'Polos y ceros', 'Etapas'],
+  }
+  $: TABS = TAB_IDS.map((id, i) => ({ id, label: (LABELS[$lang] ?? LABELS.en)[i] }))
 </script>
 
 <div class="tabbar" role="tablist">

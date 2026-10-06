@@ -28,6 +28,13 @@
     legend: '#0a1628', legendBorder: '#5d4037',
   }
 
+  /** Legend / hover names, in the round's language (as the rest of the round). */
+  const NAMES = {
+    en: { poles: 'Poles', zeros: 'Zeros', slotPoles: s => `${s} poles`, slotZeros: s => `${s} zeros`, curves: 'Curves' },
+    es: { poles: 'Polos', zeros: 'Ceros', slotPoles: s => `${s} polos`, slotZeros: s => `${s} ceros`, curves: 'Curvas' },
+  }
+  $: tn = NAMES[round.lang === 'es' ? 'es' : 'en']
+
   const line = (x, y, color = TRACE, name = 'H') => ({
     x, y, mode: 'lines', name, showlegend: false,
     line: { color, width: 2.5 },
@@ -88,12 +95,12 @@
   $: groups = view !== 'poleZero' ? [] : round.lineup
     // Line-up: poles and zeros share the slot colour (as in the guide's figures)
     ? round.lineup.flatMap(m => [
-      { roots: m.design.poles.map(([re, im]) => ({ re, im, label: rootLabel('p', re, im) })), symbol: 'x', color: m.color, size: 11, name: `${m.slot} poles`, showlegend: false },
-      { roots: m.design.zeros.map(([re, im]) => ({ re, im, label: rootLabel('z', re, im) })), symbol: 'circle-open', color: m.color, size: 11, name: `${m.slot} zeros`, showlegend: false },
+      { roots: m.design.poles.map(([re, im]) => ({ re, im, label: rootLabel('p', re, im) })), symbol: 'x', color: m.color, size: 11, name: tn.slotPoles(m.slot), showlegend: false },
+      { roots: m.design.zeros.map(([re, im]) => ({ re, im, label: rootLabel('z', re, im) })), symbol: 'circle-open', color: m.color, size: 11, name: tn.slotZeros(m.slot), showlegend: false },
     ])
     : [
-      { roots: d.poles.map(([re, im]) => ({ re, im, label: rootLabel('p', re, im) })), symbol: 'x', color: POLE, size: 12, name: 'Poles' },
-      { roots: d.zeros.map(([re, im]) => ({ re, im, label: rootLabel('z', re, im) })), symbol: 'circle-open', color: ZERO, size: 12, name: 'Zeros' },
+      { roots: d.poles.map(([re, im]) => ({ re, im, label: rootLabel('p', re, im) })), symbol: 'x', color: POLE, size: 12, name: tn.poles },
+      { roots: d.zeros.map(([re, im]) => ({ re, im, label: rootLabel('z', re, im) })), symbol: 'circle-open', color: ZERO, size: 12, name: tn.zeros },
     ]
 
   /**
@@ -122,7 +129,7 @@
 
 <div class="game-plot">
   {#if round.lineup && !compact}
-    <div class="slots" aria-label="Curves">
+    <div class="slots" aria-label={tn.curves}>
       {#each round.lineup as m}
         <span class="slot"><span class="dot" style:background={m.color}></span>{m.slot}</span>
       {/each}

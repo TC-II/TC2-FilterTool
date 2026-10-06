@@ -4,15 +4,34 @@
 // the factor that converts one form unit to rad/s (2π for Hz, 1 for rad/s).
 // Engine params are always rad/s.
 
+import { table, fmt } from './i18n.js'
+
 export const LP = 0, HP = 1, BP = 2, BR = 3, GD = 4
 export const FREQS = 0, F0_BW = 1          // define_with
 export const MAX_ORDER = 50                // engine MAX_ORDER
 export const GD_APPROX = new Set([5, 6])   // group delay: Bessel, Gauss only
+export const MAG_APPROX = new Set([0, 1, 2, 3, 4])   // HP / BP / BR: no Bessel / Gauss
+
+/**
+ * Approximations a filter type supports (null = all of them). Bessel and Gauss
+ * are group-delay approximations: they are offered for LP (as a magnitude
+ * reference) and GD only, not transformed to HP / BP / BR.
+ */
+export function allowedApprox(filterType) {
+  if (filterType === GD) return GD_APPROX
+  if (filterType === HP || filterType === BP || filterType === BR) return MAG_APPROX
+  return null
+}
+
+/** Fallback approximation when switching to a type that doesn't support the current one. */
+export const defaultApprox = filterType => (filterType === GD ? 5 : 0)
 
 /** Defaults, frequencies in Hz. */
 export const DEFAULT_FORM = {
   filterType: LP, approxType: 0,
-  nMin: 1, nMax: 10,
+  // The designer always searches the whole range (no order control): the
+  // engine returns the minimum order that meets the template, capped at 50.
+  nMin: 1, nMax: MAX_ORDER,
   apDb: 3, aaDb: 40, gainDb: 0,
   denorm: 0,                               // 0–100 %
   // LP / HP
@@ -96,8 +115,9 @@ export function formFromParams(p, toRad, prev = DEFAULT_FORM) {
     ...prev,
     filterType: p.filter_type ?? 0,
     approxType: p.approx_type ?? 0,
-    nMin: p.N_min ?? 1,
-    nMax: p.N_max ?? 10,
+    // Always the full range, whatever a loaded file says
+    nMin: 1,
+    nMax: MAX_ORDER,
     apDb: p.ap_dB ?? 3,
     aaDb: p.aa_dB ?? 40,
     gainDb: 20 * Math.log10(Math.max(p.gain ?? 1, 1e-12)),
@@ -125,52 +145,107 @@ export function formFromParams(p, toRad, prev = DEFAULT_FORM) {
   }
 }
 
+const VALIDATE_TX = {
+  en: {
+    positive: '{label} must be > 0',
+    nMin: 'N min must be an integer ≥ 1',
+    nMax: 'N max must be an integer ≤ {max}',
+    nOrder: 'N max must be ≥ N min',
+    ripple: 'Ripple must be > 0 dB',
+    atten: 'Attenuation must be larger than the ripple',
+    gdApprox: 'Group delay supports only Bessel and Gauss',
+    magApprox: 'Bessel and Gauss are available only for low-pass and group delay',
+    refFreq: 'Reference frequency',
+    gamma: 'γ must be between 0 and 100 %',
+    fp: 'Passband edge',
+    fa: 'Stopband edge',
+    lpOrder: 'Low-pass needs passband edge < stopband edge',
+    hpOrder: 'High-pass needs stopband edge < passband edge',
+    f0: 'Centre frequency',
+    bwp: 'BWp',
+    bwa: 'BWa',
+    bpBw: 'Band-pass needs BWp < BWa',
+    brBw: 'Band-reject needs BWa (stop) < BWp (pass)',
+    edges: 'Band edges',
+    bpEdges: 'Band-pass needs a₁ < p₁ < p₂ < a₂',
+    brEdges: 'Band-reject needs p₁ < a₁ < a₂ < p₂',
+  },
+  es: {
+    positive: '{label} debe ser > 0',
+    nMin: 'N mín. debe ser un entero ≥ 1',
+    nMax: 'N máx. debe ser un entero ≤ {max}',
+    nOrder: 'N máx. debe ser ≥ N mín.',
+    ripple: 'Ap debe ser > 0 dB',
+    atten: 'Aa debe ser mayor que Ap',
+    gdApprox: 'El retardo de grupo solo admite Bessel y Gauss',
+    magApprox: 'Bessel y Gauss solo están disponibles para pasa-bajos y retardo de grupo',
+    refFreq: 'La frecuencia de referencia',
+    gamma: 'γ debe estar entre 0 y 100 %',
+    fp: 'La frecuencia de paso',
+    fa: 'La frecuencia de atenuación',
+    lpOrder: 'Un pasa-bajos requiere fp < fa',
+    hpOrder: 'Un pasa-altos requiere fa < fp',
+    f0: 'La frecuencia central',
+    bwp: 'Bp',
+    bwa: 'Ba',
+    bpBw: 'Un pasa-banda requiere Bp < Ba',
+    brBw: 'Un rechaza-banda requiere Ba (atenuación) < Bp (paso)',
+    edges: 'Los bordes de banda',
+    bpEdges: 'Un pasa-banda requiere a₁ < p₁ < p₂ < a₂',
+    brEdges: 'Un rechaza-banda requiere p₁ < a₁ < a₂ < p₂',
+  },
+}
+
 /**
  * Human-readable validation mirroring the engine's validate().
  * Returns { field: message }, empty when valid. Field names match the form.
+ * `lang` picks the message language ('en' | 'es').
  */
-export function validateForm(form) {
+export function validateForm(form, lang = 'en') {
+  const tx = table(VALIDATE_TX, lang)
   const e = {}
   const ft = form.filterType
-  const pos = (k, label) => { if (!(form[k] > 0)) e[k] = `${label} must be > 0` }
+  const pos = (k, label) => { if (!(form[k] > 0)) e[k] = fmt(tx.positive, { label }) }
 
-  if (!Number.isInteger(form.nMin) || form.nMin < 1) e.nMin = 'N min must be an integer ≥ 1'
-  if (!Number.isInteger(form.nMax) || form.nMax > MAX_ORDER) e.nMax = `N max must be an integer ≤ ${MAX_ORDER}`
-  if (!e.nMin && !e.nMax && form.nMin > form.nMax) e.nMax = 'N max must be ≥ N min'
+  if (!Number.isInteger(form.nMin) || form.nMin < 1) e.nMin = tx.nMin
+  if (!Number.isInteger(form.nMax) || form.nMax > MAX_ORDER) e.nMax = fmt(tx.nMax, { max: MAX_ORDER })
+  if (!e.nMin && !e.nMax && form.nMin > form.nMax) e.nMax = tx.nOrder
 
-  if (!(form.apDb > 0)) e.apDb = 'Ripple must be > 0 dB'
-  else if (!(form.aaDb > form.apDb)) e.aaDb = 'Attenuation must be larger than the ripple'
+  if (!(form.apDb > 0)) e.apDb = tx.ripple
+  else if (!(form.aaDb > form.apDb)) e.aaDb = tx.atten
+
+  const allow = allowedApprox(ft)
+  if (allow && !allow.has(form.approxType)) e.approxType = ft === GD ? tx.gdApprox : tx.magApprox
 
   if (ft === GD) {
-    if (!GD_APPROX.has(form.approxType)) e.approxType = 'Group delay supports only Bessel and Gauss'
-    pos('tau0', 'τ₀'); pos('frg', 'Reference frequency')
-    if (!(form.gamma > 0 && form.gamma < 100)) e.gamma = 'γ must be between 0 and 100 %'
+    pos('tau0', 'τ₀'); pos('frg', tx.refFreq)
+    if (!(form.gamma > 0 && form.gamma < 100)) e.gamma = tx.gamma
     return e
   }
 
   if (!isBand(ft)) {
-    pos('fp', 'Passband edge'); pos('fa', 'Stopband edge')
+    pos('fp', tx.fp); pos('fa', tx.fa)
     if (!e.fp && !e.fa) {
-      if (ft === LP && !(form.fp < form.fa)) e.fa = 'Low-pass needs passband edge < stopband edge'
-      if (ft === HP && !(form.fa < form.fp)) e.fa = 'High-pass needs stopband edge < passband edge'
+      if (ft === LP && !(form.fp < form.fa)) e.fa = tx.lpOrder
+      if (ft === HP && !(form.fa < form.fp)) e.fa = tx.hpOrder
     }
     return e
   }
 
   if (form.defineWith === F0_BW) {
-    pos('f0', 'Centre frequency'); pos('bwp', 'BWp'); pos('bwa', 'BWa')
+    pos('f0', tx.f0); pos('bwp', tx.bwp); pos('bwa', tx.bwa)
     if (!e.bwp && !e.bwa) {
-      if (ft === BP && !(form.bwp < form.bwa)) e.bwa = 'Band-pass needs BWp < BWa'
-      if (ft === BR && !(form.bwa < form.bwp)) e.bwp = 'Band-reject needs BWa (stop) < BWp (pass)'
+      if (ft === BP && !(form.bwp < form.bwa)) e.bwa = tx.bpBw
+      if (ft === BR && !(form.bwa < form.bwp)) e.bwp = tx.brBw
     }
     return e
   }
 
-  for (const k of ['fp1', 'fp2', 'fa1', 'fa2']) pos(k, 'Band edges')
+  for (const k of ['fp1', 'fp2', 'fa1', 'fa2']) pos(k, tx.edges)
   if (e.fp1 || e.fp2 || e.fa1 || e.fa2) return e
   const { fp1, fp2, fa1, fa2 } = form
-  if (ft === BP && !(fa1 < fp1 && fp1 < fp2 && fp2 < fa2)) e.fa2 = 'Band-pass needs a₁ < p₁ < p₂ < a₂'
-  if (ft === BR && !(fp1 < fa1 && fa1 < fa2 && fa2 < fp2)) e.fa2 = 'Band-reject needs p₁ < a₁ < a₂ < p₂'
+  if (ft === BP && !(fa1 < fp1 && fp1 < fp2 && fp2 < fa2)) e.fa2 = tx.bpEdges
+  if (ft === BR && !(fp1 < fa1 && fa1 < fa2 && fa2 < fp2)) e.fa2 = tx.brEdges
   return e
 }
 

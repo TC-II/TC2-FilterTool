@@ -5,23 +5,48 @@
   import { APPROX_NAMES, plotColor } from '../../lib/approx.js'
   import { loadSketches, sketchY, SKETCH_W, SKETCH_H } from '../../lib/approx-sketches.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
-  import { engineReady, theme, colorMode, colorShuffle } from '../../stores/app.js'
+  import { engineReady, theme, colorMode, colorShuffle, lang } from '../../stores/app.js'
+  import { table, approxName } from '../../lib/i18n.js'
 
   export let value = 0
   /** Approximation indices that can be picked (others are shown disabled). */
   export let allowed = null
-  export let disabledTitle = 'Not available for this filter type'
+  /** Tooltip for disabled tiles (default: tx.na). */
+  export let disabledTitle = ''
 
-  const SHORT = ['Butter', 'Cheby I', 'Cheby II', 'Cauer', 'Legendre', 'Bessel', 'Gauss']
-  const TRAIT = [
-    'Maximally flat passband',
-    'Equiripple passband, steep',
-    'Flat passband, equiripple stopband',
-    'Ripple in both bands, steepest',
-    'Monotonic, steeper than Butterworth',
-    'Near-linear phase, gentle roll-off',
-    'No overshoot, gentle roll-off',
-  ]
+  const TX = {
+    en: {
+      aria: 'Approximation',
+      na: 'Not available for this filter type',
+      ghost: ' (grey: Butterworth, same spec)',
+      short: ['Butter', 'Cheby I', 'Cheby II', 'Cauer', 'Optimum L', 'Bessel', 'Gauss'],
+      trait: [
+        'Maximally flat passband',
+        'Equiripple passband, steep',
+        'Flat passband, equiripple stopband',
+        'Ripple in both bands, steepest',
+        'Monotonic, steeper than Butterworth',
+        'Near-linear phase, gentle roll-off',
+        'No overshoot, gentle roll-off',
+      ],
+    },
+    es: {
+      aria: 'Aproximación',
+      na: 'No disponible para este tipo de filtro',
+      ghost: ' (gris: Butterworth, misma plantilla)',
+      short: ['Butter', 'Cheby I', 'Cheby II', 'Cauer', 'Óptimo L', 'Bessel', 'Gauss'],
+      trait: [
+        'Banda de paso máximamente plana',
+        'Banda de paso equiripple, pendiente pronunciada',
+        'Banda de paso plana, banda de atenuación equiripple',
+        'Oscilaciones en ambas bandas, la transición más abrupta',
+        'Monótona, más abrupta que Butterworth',
+        'Fase casi lineal, caída suave',
+        'Sin sobrepico, caída suave',
+      ],
+    },
+  }
+  $: tx = table(TX, $lang)
 
   const dispatch = createEventDispatcher()
   let sketches = Array(7).fill(null)   // { path, ghost, gp, ga } per approximation
@@ -53,8 +78,9 @@
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus -->
-<div class="tiles" role="radiogroup" aria-label="Approximation" on:keydown={onKeydown}>
-  {#each APPROX_NAMES as name, i}
+<div class="tiles" role="radiogroup" aria-label={tx.aria} on:keydown={onKeydown}>
+  {#each APPROX_NAMES as _, i}
+    {@const name = approxName(i, $lang)}
     {@const color = plotColor(i, $theme, $colorMode, $colorShuffle)}
     <button
       type="button"
@@ -66,7 +92,7 @@
       aria-label={name}
       tabindex={value === i ? 0 : -1}
       disabled={!can(i)}
-      title={can(i) ? `${name}: ${TRAIT[i]}${i ? ' (grey: Butterworth, same spec)' : ''}` : `${name}: ${disabledTitle}`}
+      title={can(i) ? `${name}: ${tx.trait[i]}${i ? tx.ghost : ''}` : `${name}: ${disabledTitle || tx.na}`}
       style="--c: {color}"
       on:click={() => pick(i)}
     >
@@ -80,7 +106,7 @@
           {#if sk.path}<path class="curve" d={sk.path} />{/if}
         {/if}
       </svg>
-      <span class="name">{SHORT[i]}</span>
+      <span class="name" class:long={tx.short[i].length > 8}>{tx.short[i]}</span>
     </button>
   {/each}
 </div>
@@ -147,8 +173,11 @@
     line-height: 1.1;
     text-align: center;
     white-space: nowrap;
-    overflow: hidden;
+    /* Clip sideways only, so accents (Óptimo L) aren't cut at the top */
+    overflow: clip visible;
     text-overflow: ellipsis;
   }
   .tile.on .name { font-weight: 700; }
+  /* "Optimum L" in a quarter-width tile */
+  .name.long { font-size: 0.62rem; letter-spacing: -0.03em; }
 </style>

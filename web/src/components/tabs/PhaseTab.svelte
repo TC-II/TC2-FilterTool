@@ -1,6 +1,7 @@
 <script>
-  import { bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit } from '../../stores/app.js'
-  import { APPROX_NAMES, plotColor, compareLine, freqAxis } from '../../lib/approx.js'
+  import { bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit, lang } from '../../stores/app.js'
+  import { approxName } from '../../lib/i18n.js'
+  import { plotColor, compareLine, freqAxis } from '../../lib/approx.js'
   import BodePlot from '../BodePlot.svelte'
 
   const PHASE_BASE_TICK = 45
@@ -31,14 +32,14 @@
       x: $bodeData.freq.map(f => f * axis.scale),
       y: $bodeData.phase,
       mode: 'lines',
-      name: APPROX_NAMES[$filterParams?.approx_type ?? 0],
+      name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
     }] : []),
     ...$comparisons.map(c => ({
       x: c.bodeData.freq.map(f => f * axis.scale),
       y: c.bodeData.phase,
       mode: 'lines',
-      name: APPROX_NAMES[c.approxType],
+      name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
     })),
   ]

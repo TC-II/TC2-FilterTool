@@ -18,7 +18,18 @@ import { getWorkerApi } from './worker-client.js'
 import { stages, filterParams, filterResult, remainingPZ } from '../stores/app.js'
 import { autoStages } from './auto-stage.js'
 import { nextColorIndex } from './stage-colors.js'
-import { moveRoot, withQ, poleSummary } from './stage-math.js'
+import { moveRoot, withQ, poleSummary, passbandRefOmega } from './stage-math.js'
+import { normGain } from './stage-eval.js'
+import { magAtZpk, designGain } from './zpk-bode.js'
+
+/**
+ * Display name for a stage. Names are stored as 'Stage N' (also in saved
+ * files); in Spanish those default names show as 'Etapa N'.
+ */
+export function stageName(name, lang = 'en') {
+  const m = /^Stage (\d+)$/.exec(name ?? '')
+  return m && lang === 'es' ? `Etapa ${m[1]}` : name
+}
 
 const snapshot = s => ({ zeros: s.zeros, poles: s.poles, normtype: s.normtype, gainDb: s.gainDb })
 
@@ -192,26 +203,60 @@ export function wheelStageQ(stageId, dir) {
   })
 }
 
-/** Build stages from all unassigned roots (lib/auto-stage.js) and append them. */
+/**
+ * Build stages from all unassigned roots (lib/auto-stage.js) and append them,
+ * with gains that make the cascade match the designed filter: every new stage
+ * is set to unity at the passband reference (band centre for BP, where each
+ * stage's own |p| normalization would leave it well below 0 dB), and whatever
+ * is still missing there (output gain, the −Ap of even-order Chebyshev I /
+ * Cauer, stages built by hand) goes to the last new stage.
+ */
 export async function autoStage() {
   const fr = get(filterResult)
+  const params = get(filterParams)
   if (!fr?.roots) return 0
   const { sections } = autoStages(get(remainingPZ))
   if (!sections.length) return 0
   const byId = new Map([...fr.roots.zeros, ...fr.roots.poles].map(r => [r.id, [r.re, r.im]]))
-  const ft = get(filterParams)?.filter_type ?? 0
-  const base = get(stages).length
-  const color0 = nextColorIndex(get(stages))
-  const api = getWorkerApi()
-  const built = await Promise.all(sections.map((sec, i) => buildStage(api, makeStage({
+  const ft = params?.filter_type ?? 0
+  const existing = get(stages)
+  const base = existing.length
+  const color0 = nextColorIndex(existing)
+
+  const drafts = sections.map((sec, i) => makeStage({
     id: Date.now() + i,
     name: `Stage ${base + i + 1}`,
     colorIndex: color0 + i,
     zeroIds: sec.zeroIds, poleIds: sec.poleIds,
     zeros: sec.zeroIds.map(id => byId.get(id)), poles: sec.poleIds.map(id => byId.get(id)),
-  }), ft)))
+  }))
+  const gains = cascadeGains(drafts, existing, fr, passbandRefOmega(params), ft)
+  const api = getWorkerApi()
+  const built = await Promise.all(drafts.map((d, i) =>
+    buildStage(api, makeStage({ ...d, gainDb: gains[i], orig: null }), ft)))
   stages.update(list => [...list, ...built])
   return built.length
+}
+
+/** dB of |H(j·w)| for a stage { zeros, poles, normtype, gainDb }. */
+function stageDbAt(st, w, ft) {
+  const k = normGain(st.zeros, st.poles, st.normtype, ft) * Math.pow(10, (st.gainDb ?? 0) / 20)
+  return 20 * Math.log10(magAtZpk(st.zeros, st.poles, k, w))
+}
+
+/** Gain offsets (dB) for `drafts` so that existing + drafts = designed filter at w. */
+export function cascadeGains(drafts, existing, fr, w, ft) {
+  const zero = drafts.map(() => 0)
+  if (w == null) return zero
+  const tidy = v => (Number.isFinite(v) && Math.abs(v) > 1e-9 ? v : 0)
+  // Each new stage at unity at w
+  const gains = drafts.map(d => tidy(-stageDbAt(d, w, ft)))
+  // Residual: designed filter vs everything at w
+  const target = 20 * Math.log10(magAtZpk(fr.zeros, fr.poles, designGain(fr), w))
+  const have = existing.reduce((a, st) => a + stageDbAt(st, w, ft), 0)
+  const residual = target - have
+  if (Number.isFinite(residual)) gains[gains.length - 1] = tidy(gains[gains.length - 1] + residual)
+  return gains.every(Number.isFinite) ? gains : zero
 }
 
 /** Move a stage to position `to` in the list (cascade order). */

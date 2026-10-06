@@ -1,6 +1,6 @@
 export const APPROX_NAMES = [
   'Butterworth', 'Chebyshev I', 'Chebyshev II', 'Cauer',
-  'Legendre', 'Bessel', 'Gauss',
+  'Optimum L', 'Bessel', 'Gauss',   // 4: Legendre (optimum-L)
 ]
 
 /** Matplotlib tab10 — readable on light plots. */

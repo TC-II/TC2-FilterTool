@@ -2,14 +2,32 @@
   import { onMount, onDestroy } from 'svelte'
   import {
     bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit,
-    dataUnit, designForm, designBusy, templateDragging, hoveredFields,
+    dataUnit, designForm, designBusy, templateDragging, hoveredFields, lang,
+    designError,
   } from '../../stores/app.js'
-  import { APPROX_NAMES, plotColor, compareLine, freqAxis, freqRangeFromParams, TWO_PI } from '../../lib/approx.js'
+  import { table, approxName } from '../../lib/i18n.js'
+  import { plotColor, compareLine, freqAxis, freqRangeFromParams, TWO_PI } from '../../lib/approx.js'
   import { GD, buildParams, paramsClose, validateForm } from '../../lib/params.js'
   import { gdGeom, gdHandles, gdDragTo, gdCompliance, delayUnit } from '../../lib/gd-template.js'
   import { runDesign } from '../../lib/design-action.js'
   import { formatSI } from '../../lib/si.js'
   import BodePlot from '../BodePlot.svelte'
+
+  const TX = {
+    en: {
+      outside: 'Outside template',
+      delay: 'Delay', delayTitle: 'Largest delay drop below τ₀ up to the reference frequency, vs the allowed γ',
+      preview: 'Template preview · designs as soon as the template is valid',
+      updating: 'Updating…', lastGood: 'Last valid design',
+    },
+    es: {
+      outside: 'Fuera de la plantilla',
+      delay: 'Retardo', delayTitle: 'Mayor caída del retardo por debajo de τ₀ hasta la frecuencia de referencia, frente al γ admitido',
+      preview: 'Vista previa de la plantilla · se diseña apenas la plantilla es válida',
+      updating: 'Actualizando…', lastGood: 'Último diseño válido',
+    },
+  }
+  $: tx = table(TX, $lang)
 
   $: axis  = freqAxis($plotUnit)
   $: uf    = $dataUnit === 'rad' ? TWO_PI : 1
@@ -17,7 +35,7 @@
 
   // ── Live GD template (E7) from the form ──────────────────────────────────
   $: isGD      = $designForm.filterType === GD
-  $: formValid = Object.keys(validateForm($designForm)).length === 0
+  $: formValid = Object.keys(validateForm($designForm, $lang)).length === 0
   let lastGeom = null
   $: if (isGD && formValid) lastGeom = gdGeom($designForm, uf)
   $: geom    = isGD ? (formValid ? gdGeom($designForm, uf) : lastGeom) : null
@@ -50,20 +68,20 @@
       x: $bodeData.freq.map(f => f * axis.scale),
       y: $bodeData.groupDelay.map(v => v * du.k),
       mode: 'lines',
-      name: APPROX_NAMES[$filterParams?.approx_type ?? 0],
+      name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
     }] : []),
     ...$comparisons.map(c => ({
       x: c.bodeData.freq.map(f => f * axis.scale),
       y: c.bodeData.groupDelay.map(v => v * du.k),
       mode: 'lines',
-      name: APPROX_NAMES[c.approxType],
+      name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
     })),
     ...($bodeData && comp?.bad?.some(v => v !== null) ? [{
       x: $bodeData.freq.map(f => f * axis.scale),
       y: comp.bad.map(v => (v == null ? null : v * du.k)),
-      mode: 'lines', name: 'Outside template',
+      mode: 'lines', name: tx.outside,
       line: { color: DANGER[$theme] ?? DANGER.dark, width: 3.5 }, hoverinfo: 'skip',
     }] : []),
   ]
@@ -252,16 +270,18 @@
   {#if geom}
     <div class="tpl-overlay">
       {#if comp}
-        <span class="chip" class:bad={!comp.ok} title="Largest delay drop below τ₀ up to the reference frequency, vs the allowed γ">
-          Delay {comp.ok ? '✓' : '✗'} <b>−{comp.worstPct.toFixed(2)} %</b> (γ {geom.gamma.toFixed(2)} %){#if !comp.ok}&nbsp;@ {formatSI(comp.at * uf)} {$dataUnit === 'rad' ? 'rad/s' : 'Hz'}{/if}
+        <span class="chip" class:bad={!comp.ok} title={tx.delayTitle}>
+          {tx.delay} {comp.ok ? '✓' : '✗'} <b>−{comp.worstPct.toFixed(2)} %</b> (γ {geom.gamma.toFixed(2)} %){#if !comp.ok}&nbsp;@ {formatSI(comp.at * uf)} {$dataUnit === 'rad' ? 'rad/s' : 'Hz'}{/if}
         </span>
       {/if}
       {#if !designedGD}
-        <span class="chip muted">Template preview · press Design</span>
+        <span class="chip muted">{tx.preview}</span>
+      {:else if stale && $designError}
+        <!-- The form can't be designed: say the plot is the previous design (error in the tooltip) -->
+        <span class="chip bad" title={$designError}>{tx.lastGood}</span>
       {:else if stale && !dragging}
-        <button class="chip action" disabled={$designBusy} on:click={() => runDesign()}>
-          {$designBusy ? 'Designing…' : 'Out of date · Redesign'}
-        </button>
+        <!-- Live updates: the form re-designs by itself a moment after each edit -->
+        <span class="chip muted">{tx.updating}</span>
       {/if}
     </div>
     {#if label}<div class="drag-label" style="left: {label.x}px; top: {label.y}px">{label.text}</div>{/if}
@@ -281,11 +301,6 @@
   .chip b { font-weight: 600; font-family: ui-monospace, 'SF Mono', Consolas, monospace; }
   .chip.bad { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); }
   .chip.muted { border-color: var(--border); background: var(--surface); color: var(--text-dim); }
-  .chip.action {
-    pointer-events: auto; cursor: pointer; font: inherit; font-size: 0.74rem;
-    border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface));
-  }
-  .chip.action:disabled { opacity: 0.6; cursor: default; }
   .drag-label {
     position: absolute; pointer-events: none; z-index: 6;
     font-size: 0.76rem; font-family: ui-monospace, 'SF Mono', Consolas, monospace;

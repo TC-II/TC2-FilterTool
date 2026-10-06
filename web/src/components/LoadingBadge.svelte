@@ -1,18 +1,44 @@
 <script>
-  import { engineReady, engineError, engineStatus, engineProgress } from '../stores/app.js'
+  import { engineReady, engineError, engineStatus, engineProgress, lang } from '../stores/app.js'
+  import StableText from './StableText.svelte'
+
+  // Status strings are stored in English (several places set them); they are
+  // translated here, at display time.
+  const STATUS_ES = {
+    'Ready': 'Listo',
+    'Computing…': 'Calculando…',
+    'Loading WASM filter engine…': 'Cargando el motor de filtros (WASM)…',
+    'WASM filter engine ready': 'Motor de filtros (WASM) listo',
+    'Loading design…': 'Cargando diseño…',
+    'Computing Bode…': 'Calculando Bode…',
+  }
+  const ERROR = { en: 'Error', es: 'Error' }
+  // Once the engine is up the badge keeps saying Ready / Listo and shows a
+  // small spinner while a design is computing, so its width never changes
+  // (no header jump on every live redesign or language switch).
+  const READY = { en: 'Ready', es: 'Listo' }
+  $: busy = $engineReady && !$engineError && $engineStatus !== 'Ready'
+  $: status = $lang === 'es' ? (STATUS_ES[$engineStatus] ?? $engineStatus) : $engineStatus
+  $: text = $engineError ? `${ERROR[$lang] ?? ERROR.en}: ${$engineError}` : status
 </script>
 
 <span
   class="badge"
   class:ready={$engineReady}
   class:error={!!$engineError}
-  title={$engineError ? `Error: ${$engineError}` : $engineStatus}
+  title={text}
 >
   {#if !$engineReady && !$engineError}
     <span class="spinner" aria-hidden="true"></span>
+  {:else if $engineReady && !$engineError}
+    <span class="spinner" class:idle={!busy} aria-hidden="true"></span>
   {/if}
   <span class="label">
-    {$engineError ? `Error: ${$engineError}` : $engineStatus}
+    {#if $engineReady && !$engineError}
+      <StableText text={READY[$lang] ?? READY.en} variants={Object.values(READY)} align="start" />
+    {:else}
+      {text}
+    {/if}
   </span>
   {#if !$engineReady && !$engineError}
     <span class="bar-track" aria-hidden="true">
@@ -39,6 +65,8 @@
   .badge.ready { background: var(--success-bg); color: var(--success); }
   .badge.error { background: var(--danger-bg); color: var(--danger); max-width: min(420px, 55vw); }
 
+  /* Ready: the spinner slot stays (fixed width) and only shows while computing */
+  .spinner.idle { visibility: hidden; animation: none; }
   .spinner {
     width: 8px;
     height: 8px;

@@ -75,3 +75,13 @@ html, body {
     font-size: 16px;
   }
 }
+
+/* Theme switch (lib/theme-switch.js): the new theme grows as a circle over a
+   still snapshot of the old one; no default cross-fade. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }

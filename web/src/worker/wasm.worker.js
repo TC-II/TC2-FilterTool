@@ -4,6 +4,7 @@ import initWasm, {
   computeBode as wasmComputeBode,
   filterDesign as wasmFilterDesign,
 } from '@filter-engine/filter_engine.js'
+import { bodeFromZpk } from '../lib/zpk-bode.js'
 
 let initPromise = null
 
@@ -55,6 +56,11 @@ const api = {
       freqMaxHz,
       numPoints,
     )
+  },
+
+  /** Bode from zeros / poles / leading gain: stays exact at high order (lib/zpk-bode.js). */
+  async computeBodeZpk(zeros, poles, k, freqMinHz = 0.1, freqMaxHz = 1e5, numPoints = 2000) {
+    return bodeFromZpk(zeros, poles, k, freqMinHz, freqMaxHz, numPoints)
   },
 
   async buildStageFromZPK(

@@ -2,15 +2,22 @@
   import { onMount, onDestroy } from 'svelte'
   import { proxy } from 'comlink'
   import { getWorkerApi } from './lib/worker-client.js'
+  import { designBode } from './lib/zpk-bode.js'
   import { freqRangeFromParams } from './lib/approx.js'
   import {
     engineReady, engineError, engineStatus, engineProgress,
     activeTab, theme, bodePoints, filterResult, filterParams, bodeData,
-    sidebarOpen, uiEnabled, compareDash, showLegend, colorMode, colorShuffle,
+    sidebarOpen, uiEnabled, colorMode, colorShuffle,
     stages, comparisons, compareApproxes, compareSameN, pendingFormHydration,
-    plotCursor, dataUnit, plotUnit, gameMode,
+    gameMode, lang,
   } from './stores/app.js'
+  import { table, LANGS } from './lib/i18n.js'
   import LoadingBadge  from './components/LoadingBadge.svelte'
+  import LangSwitch    from './components/LangSwitch.svelte'
+  import StableText    from './components/StableText.svelte'
+  import ViewToggles   from './components/ViewToggles.svelte'
+  import PointsMeter   from './components/PointsMeter.svelte'
+  import UnitToggles   from './components/UnitToggles.svelte'
   import TabBar        from './components/TabBar.svelte'
   import Sidebar       from './components/Sidebar.svelte'
   import MagnitudeTab  from './components/tabs/MagnitudeTab.svelte'
@@ -27,21 +34,48 @@
   import { removeStage } from './lib/stages.js'
   import { hoveredStageId } from './stores/app.js'
   import { shufflePalette } from './lib/approx.js'
-  import { serializeDesign, downloadDesign, pickDesignFile, materializeDesign } from './lib/design-io.js'
+  import { switchTheme } from './lib/theme-switch.js'
+  import { serializeDesign, downloadDesign, pickDesignFile, materializeDesign, NO_FILE } from './lib/design-io.js'
 
-  const POINTS_OPTIONS = [2000, 5000, 10000, 20000, 50000, 100000]
-  const COLOR_MODE_OPTIONS = [
-    { id: 'default', label: 'Default' },
-    { id: 'gray',    label: 'Gray' },
-    { id: 'random',  label: 'Random' },
-  ]
-  const UNIT_OPTIONS = [
-    { id: 'hz',  label: 'Hz' },
-    { id: 'rad', label: 'rad/s' },
+  const TX = {
+    en: {
+      params: 'Params', hideSidebar: 'Hide sidebar', showSidebar: 'Show sidebar',
+      game: 'GAME', gameTitle: 'Game mode: guess the approximation, type and order from a plot',
+      colors: 'Colors', colorsTitle: 'Trace colors for main + comparisons',
+      cDefault: 'Default', cGray: 'Gray', cRandom: 'Random',
+      toLight: 'Switch to light mode', toDark: 'Switch to dark mode', light: 'Light', dark: 'Dark',
+      save: 'Save', saveTitle: 'Save design to .ftjson', saveNeeds: 'Enter a valid template first',
+      load: 'Load', loading: 'Loading…', loadTitle: 'Load design from .ftjson',
+    },
+    es: {
+      params: 'Parámetros', hideSidebar: 'Ocultar el panel lateral', showSidebar: 'Mostrar el panel lateral',
+      game: 'JUEGO', gameTitle: 'Modo juego: adivinar la aproximación, el tipo y el orden a partir de un gráfico',
+      colors: 'Colores', colorsTitle: 'Colores de las curvas (principal + comparaciones)',
+      cDefault: 'Por defecto', cGray: 'Gris', cRandom: 'Aleatorio',
+      toLight: 'Cambiar a modo claro', toDark: 'Cambiar a modo oscuro', light: 'Claro', dark: 'Oscuro',
+      save: 'Guardar', saveTitle: 'Guardar el diseño en .ftjson', saveNeeds: 'Primero ingrese una plantilla válida',
+      load: 'Cargar', loading: 'Cargando…', loadTitle: 'Cargar un diseño desde .ftjson',
+    },
+  }
+  $: tx = table(TX, $lang)
+  /** Every language's text for these keys: header labels reserve the widest (StableText). */
+  const all = (...keys) => keys.flatMap(k => LANGS.map(l => table(TX, l)[k]))
+
+  $: COLOR_MODE_OPTIONS = [
+    { id: 'default', label: tx.cDefault },
+    { id: 'gray',    label: tx.cGray },
+    { id: 'random',  label: tx.cRandom },
   ]
 
   let ioBusy = false
   let ioError = ''
+
+  /** Light / dark: circular reveal growing from the button's icon. */
+  function onThemeClick(e) {
+    const ico = e.currentTarget.querySelector('.theme-ico') ?? e.currentTarget
+    const b = ico.getBoundingClientRect()
+    switchTheme(undefined, { x: b.left + b.width / 2, y: b.top + b.height / 2 })
+  }
 
   function onColorModeChange() {
     if ($colorMode === 'random') colorShuffle.set(shufflePalette())
@@ -112,14 +146,14 @@
   })
 
   async function onPointsChange() {
-    // <select> values are strings; keep bodePoints numeric for the worker.
+    // Keep bodePoints numeric for the worker (loaded designs may carry strings).
     const pts = Number($bodePoints)
     if (Number.isFinite(pts) && pts !== $bodePoints) bodePoints.set(pts)
     if (!$filterResult || !$filterParams) return
     try {
       const r = freqRangeFromParams($filterParams)
       const api = getWorkerApi()
-      bodeData.set(await api.computeBode($filterResult.num, $filterResult.den, r.min, r.max, pts || $bodePoints))
+      bodeData.set(await designBode(api, $filterResult, r.min, r.max, pts || $bodePoints))
     } catch (_) {}
   }
 
@@ -162,7 +196,7 @@
       engineStatus.set('Ready')
     } catch (e) {
       // User cancelled the file picker — not an error.
-      if (e?.message === 'No file selected.') return
+      if (e?.code === NO_FILE) return
       ioError = e.message ?? String(e)
       engineStatus.set('Ready')
     } finally {
@@ -177,11 +211,11 @@
       class="icon-btn"
       class:active={$sidebarOpen}
       on:click={() => sidebarOpen.update(v => !v)}
-      aria-label={$sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-      title={$sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+      aria-label={$sidebarOpen ? tx.hideSidebar : tx.showSidebar}
+      title={$sidebarOpen ? tx.hideSidebar : tx.showSidebar}
       aria-pressed={$sidebarOpen}
     >
-      Params
+      <StableText text={tx.params} variants={all('params')} />
     </button>
     <img class="logo-icon" src="{import.meta.env.BASE_URL}favicon-48x48.png" width="28" height="28" alt="" />
     <span class="logo">FilterTool</span>
@@ -190,107 +224,53 @@
       class="header-btn game-btn"
       disabled={!$uiEnabled}
       on:click={enterGame}
-      title="Game mode: guess the approximation, type and order from a plot"
+      title={tx.gameTitle}
     >
-      <span class="game-ico" aria-hidden="true"></span>GAME
+      <span class="game-ico" aria-hidden="true"></span><StableText text={tx.game} variants={all('game')} />
     </button>
     <div class="header-spacer"></div>
 
-    <label
-      class="nav-field"
-      class:disabled={!$uiEnabled}
-      class:warn={pointsWarn}
-      title={pointsWarn
-        ? 'High-order Chebyshev/Cauer: increase Points for accurate Bode plots'
-        : 'Frequency points used for Bode plots'}
-    >
-      <span class="nav-lbl">Points</span>
-      <select
-        class="nav-sel"
-        bind:value={$bodePoints}
-        disabled={!$uiEnabled}
-        on:change={onPointsChange}
-      >
-        {#each POINTS_OPTIONS as n}
-          <option value={n}>{n.toLocaleString()}</option>
-        {/each}
-      </select>
-    </label>
+    <!-- Bode resolution meter · frequency units (form | plots) -->
+    <PointsMeter disabled={!$uiEnabled} warn={pointsWarn} on:change={onPointsChange} />
+    <UnitToggles />
 
-    <label class="nav-field" title="Units for the parameter form and pole/zero readouts">
-      <span class="nav-lbl">Data</span>
-      <select class="nav-sel narrow" bind:value={$dataUnit}>
-        {#each UNIT_OPTIONS as opt}
-          <option value={opt.id}>{opt.label}</option>
-        {/each}
-      </select>
-    </label>
-    <label class="nav-field" title="Units for plot axes (Bode + pole/zero)">
-      <span class="nav-lbl">Plots</span>
-      <select class="nav-sel narrow" bind:value={$plotUnit}>
-        {#each UNIT_OPTIONS as opt}
-          <option value={opt.id}>{opt.label}</option>
-        {/each}
-      </select>
-    </label>
-
-    <button
-      class="header-btn"
-      class:active={$plotCursor}
-      on:click={() => plotCursor.update(v => !v)}
-      aria-pressed={$plotCursor}
-      title={$plotCursor ? 'Hide plot cursor (hover readout)' : 'Show plot cursor (hover readout)'}
-    >
-      Cursor
-    </button>
-    <button
-      class="header-btn"
-      class:active={$compareDash}
-      on:click={() => compareDash.update(v => !v)}
-      aria-pressed={$compareDash}
-      title={$compareDash ? 'Comparison traces: dashed' : 'Comparison traces: solid'}
-    >
-      {$compareDash ? 'Dashed' : 'Solid'}
-    </button>
-    <button
-      class="header-btn"
-      class:active={$showLegend}
-      on:click={() => showLegend.update(v => !v)}
-      aria-pressed={$showLegend}
-      title={$showLegend ? 'Hide plot legend' : 'Show plot legend'}
-    >
-      Legend
-    </button>
-    <label class="nav-field" title="Trace colors for main + comparisons">
-      <span class="nav-lbl">Colors</span>
-      <select class="nav-sel" bind:value={$colorMode} on:change={onColorModeChange}>
+    <!-- Cursor · comparison line style · legend, as icons (no text to shift between languages) -->
+    <ViewToggles />
+    <label class="nav-field" title={tx.colorsTitle}>
+      <span class="nav-lbl"><StableText text={tx.colors} variants={all('colors')} align="end" /></span>
+      <select class="nav-sel colors" bind:value={$colorMode} on:change={onColorModeChange}>
         {#each COLOR_MODE_OPTIONS as opt}
           <option value={opt.id}>{opt.label}</option>
         {/each}
       </select>
     </label>
 
+    <LangSwitch />
     <button
       class="header-btn theme-btn"
-      on:click={() => theme.set($theme === 'dark' ? 'light' : 'dark')}
-      aria-label={`Switch to ${$theme === 'dark' ? 'light' : 'dark'} mode`}
-      title={`Switch to ${$theme === 'dark' ? 'light' : 'dark'} mode`}
+      on:click={onThemeClick}
+      aria-label={$theme === 'dark' ? tx.toLight : tx.toDark}
+      title={$theme === 'dark' ? tx.toLight : tx.toDark}
     >
-      <span class="theme-ico" aria-hidden="true">{$theme === 'dark' ? '☀️' : '🌙'}</span>
-      {$theme === 'dark' ? 'Light' : 'Dark'}
+      {#key $theme}<span class="theme-ico" aria-hidden="true">{$theme === 'dark' ? '☀️' : '🌙'}</span>{/key}
+      <StableText text={$theme === 'dark' ? tx.light : tx.dark} variants={all('light', 'dark')} />
     </button>
     <button
       class="header-btn"
       disabled={!$filterParams || ioBusy}
       on:click={onSave}
-      title={$filterParams ? 'Save design to .ftjson' : 'Design a filter first'}
-    >Save</button>
+      title={$filterParams ? tx.saveTitle : tx.saveNeeds}
+    >
+      <StableText text={tx.save} variants={all('save')} />
+    </button>
     <button
       class="header-btn"
       disabled={!$uiEnabled || ioBusy}
       on:click={onLoad}
-      title="Load design from .ftjson"
-    >{ioBusy ? 'Loading…' : 'Load'}</button>
+      title={tx.loadTitle}
+    >
+      <StableText text={ioBusy ? tx.loading : tx.load} variants={all('load', 'loading')} />
+    </button>
   </header>
   {#if ioError}
     <div class="io-error" role="alert">{ioError}</div>
@@ -413,11 +393,6 @@
     border-color: var(--accent);
     background: var(--selected);
   }
-  .header-btn.active {
-    color: var(--text);
-    border-color: var(--accent);
-    background: var(--selected);
-  }
   .icon-btn:hover, .header-btn:hover:not(:disabled) { background: var(--hover); }
   .header-btn:disabled { opacity: 0.4; cursor: default; }
 
@@ -437,6 +412,18 @@
     padding: 0.4rem 0.6rem 0.35rem;
   }
   .game-btn:hover:not(:disabled) { background: #0d2035; border-color: #00bcd4; color: #00bcd4; }
+  /* Light theme: same pixel button, paper colours (navy text, cyan hover) */
+  :global(:root[data-theme='light']) .game-btn {
+    color: #0d2035;
+    background: #fdf6e3;
+    box-shadow: 3px 3px 0 #bcaaa4;
+  }
+  :global(:root[data-theme='light']) .game-btn:hover:not(:disabled) {
+    background: #e0f7fa;
+    border-color: #0097a7;
+    color: #00838f;
+  }
+  :global(:root[data-theme='light']) .game-btn:active:not(:disabled) { box-shadow: 1px 1px 0 #bcaaa4; }
   .game-btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #5d4037; }
   .game-ico {
     width: 8px;
@@ -461,7 +448,13 @@
     line-height: 1;
     /* Emoji ignore color; keep it from inheriting the muted text tint */
     filter: saturate(1.1);
+    animation: theme-ico-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
+  @keyframes theme-ico-in {
+    from { transform: rotate(-120deg) scale(0.3); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { .theme-ico { animation: none; } }
 
   .io-error {
     flex-shrink: 0;
@@ -477,13 +470,6 @@
     align-items: center;
     gap: 0.35rem;
     flex-shrink: 0;
-  }
-  .nav-field.disabled { opacity: 0.45; pointer-events: none; }
-  .nav-field.warn .nav-lbl { color: var(--warning); font-weight: 600; }
-  .nav-field.warn .nav-sel {
-    border-color: var(--warning);
-    background: var(--warning-bg);
-    color: var(--text);
   }
   .nav-lbl {
     font-size: 0.82rem;
@@ -501,7 +487,8 @@
     min-width: 5rem;
   }
   .nav-sel:focus { border-color: var(--accent); }
-  .nav-sel.narrow { min-width: 4.2rem; }
+  /* Fits the longest option in either language ("Por defecto") */
+  .nav-sel.colors { width: 7.4rem; }
 
   .body {
     display: flex;

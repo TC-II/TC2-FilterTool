@@ -8,16 +8,67 @@
   import { onMount, onDestroy, createEventDispatcher, tick } from 'svelte'
   import { getWorkerApi } from '../../lib/worker-client.js'
   import {
-    createRound, VIEWS, ROUND_KINDS, DEFAULT_SETTINGS, GAME_TYPES, GAME_APPROX,
-    APPROX_LABELS, TYPE_SHORT, describeRound, givenLine, sanitizeSettings,
+    createRound, localViews, localRoundKinds, DEFAULT_SETTINGS, GAME_TYPES, GAME_APPROX,
+    approxLabel, TYPE_SHORT, describeRound, givenLine, sanitizeSettings,
     isCorrect, isAnswered,
   } from '../../lib/game/quiz.js'
   import { sfx } from '../../lib/game/sfx.js'
   import { celebrateOver } from '../../lib/game/transition.js'
   import GamePlot from './GamePlot.svelte'
+  import LangSwitch from '../LangSwitch.svelte'
   import { pix } from '../../lib/game/pixtext.js'
+  import { lang } from '../../stores/app.js'
+  import { table, fmt } from '../../lib/i18n.js'
 
   const dispatch = createEventDispatcher()
+
+  // UI strings. Round content (prompts, options, explanations) comes from
+  // quiz.js in the round's own language; this chrome follows $lang live.
+  const TX = {
+    en: {
+      app: 'Filter quiz game mode', title: 'FILTER QUIZ',
+      round: 'ROUND', score: 'SCORE', streak: 'STREAK', acc: 'ACC', best: 'BEST',
+      sfxOn: 'SFX ON', sfxOff: 'SFX OFF', mute: 'Mute sound', unmute: 'Unmute sound',
+      options: 'OPTIONS', exit: 'EXIT', exitTitle: 'Back to the normal mode',
+      given: 'GIVEN', quest: 'QUEST',
+      loading: 'LOADING', engineError: 'ENGINE ERROR', retry: 'RETRY',
+      headMatch: 'Match the plot', headLineup: 'Name each curve', headTheory: 'Theory card',
+      questions: n => `${n} question${n === 1 ? '' : 's'}`,
+      multi: ' · pick all that apply', option: 'Option {n}',
+      ok: 'OK', bad: 'X', why: 'WHY?', hide: 'HIDE',
+      perfect: 'PERFECT!', notBad: 'NOT BAD', ouch: 'OUCH!',
+      right: '{c}/{t} right', bonus: ' · streak bonus +{b}',
+      next: 'NEXT >>', check: 'CHECK!',
+      hint: 'keys 1–9 answer · enter {what}', hintNext: 'next', hintCheck: 'check',
+      dialog: 'Game options', kinds: 'QUESTION TYPES', plots: 'PLOTS', types: 'FILTER TYPES', approxes: 'APPROXIMATIONS',
+      note: 'Changes apply right away if the current round is still untouched, otherwise from the next one. Answers only list the approximations and types enabled here (a question with a single possible answer is skipped). Match rounds show 4 cards of mixed plot kinds, 1 to 4 of them from the given filter: magnitude, phase and pole-zero pair freely, the step response only with magnitude or pole-zero, and the group delay only as a card. Line-ups overlay 3–4 of the enabled approximations (at least 3 needed) on a magnitude, phase or pole-zero plot. Theory cards need no plot.',
+      newRun: 'NEW RUN', close: 'CLOSE',
+      cheerPerfect: 'PERFECT!', cheerStreak: '{n} IN A ROW!',
+    },
+    es: {
+      app: 'Modo juego: quiz de filtros', title: 'QUIZ DE FILTROS',
+      round: 'RONDA', score: 'PUNTOS', streak: 'RACHA', acc: 'PREC.', best: 'RÉCORD',
+      sfxOn: 'SONIDO ON', sfxOff: 'SONIDO OFF', mute: 'Silenciar', unmute: 'Activar el sonido',
+      options: 'OPCIONES', exit: 'SALIR', exitTitle: 'Volver al modo normal',
+      given: 'DATO', quest: 'PREGUNTA',
+      loading: 'CARGANDO', engineError: 'ERROR DEL MOTOR', retry: 'REINTENTAR',
+      headMatch: 'Emparejar gráficos', headLineup: 'Identificar cada curva', headTheory: 'Tarjeta de teoría',
+      questions: n => `${n} pregunta${n === 1 ? '' : 's'}`,
+      multi: ' · marque todas las que correspondan', option: 'Opción {n}',
+      why: '¿POR QUÉ?', hide: 'OCULTAR',
+      perfect: '¡PERFECTO!', notBad: 'NADA MAL', ouch: '¡AUCH!',
+      right: '{c}/{t} bien', bonus: ' · bonus por racha +{b}',
+      next: 'SIGUIENTE >>', check: '¡VERIFICAR!',
+      hint: 'teclas 1–9 responden · enter {what}', hintNext: 'sigue', hintCheck: 'verifica',
+      dialog: 'Opciones del juego', kinds: 'TIPOS DE PREGUNTA', plots: 'GRÁFICOS', types: 'TIPOS DE FILTRO', approxes: 'APROXIMACIONES',
+      note: 'Los cambios se aplican de inmediato si la ronda actual todavía no se respondió; si no, desde la siguiente. Las respuestas solo listan las aproximaciones y los tipos habilitados aquí (se omite una pregunta con una única respuesta posible). Las rondas de emparejar muestran 4 gráficos de distintos tipos, de 1 a 4 del filtro dado: módulo, fase y polos y ceros se combinan libremente, la respuesta al escalón solo con módulo o polos y ceros, y el retardo de grupo solo como opción. Las curvas superpuestas muestran 3–4 de las aproximaciones habilitadas (se necesitan al menos 3) sobre un gráfico de módulo, fase o polos y ceros. Las tarjetas de teoría no usan gráficos.',
+      newRun: 'NUEVA PARTIDA', close: 'CERRAR',
+      cheerPerfect: '¡PERFECTO!', cheerStreak: '¡{n} SEGUIDAS!',
+    },
+  }
+  $: t = table(TX, $lang)
+  $: views = localViews($lang)
+  $: roundKinds = localRoundKinds($lang)
 
   const SETTINGS_KEY = 'filtertool.game.settings'
   const BEST_KEY = 'filtertool.game.best'
@@ -63,7 +114,7 @@
     loading = true
     error = ''
     try {
-      const r = await createRound(getWorkerApi(), settings, Math.random, ++roundNo)
+      const r = await createRound(getWorkerApi(), { ...settings, lang: $lang }, Math.random, ++roundNo)
       answers = {}
       openWhy = {}
       checked = false
@@ -74,6 +125,22 @@
     } finally {
       loading = false
     }
+    // The language changed while this round was being built: redraw it
+    if (relang) {
+      relang = false
+      if (round && round.lang !== $lang && untouched()) nextRound()
+    }
+  }
+
+  // ── Language: an untouched round is redrawn in the new language; one already
+  // answered keeps its text, and the new language applies from the next round.
+  let relang = false
+  const untouched = () => !checked && Object.keys(answers).length === 0
+  $: langChanged($lang)
+  function langChanged(l) {
+    if (!round || round.lang === l) return
+    if (loading) { relang = true; return }
+    if (untouched()) nextRound()
   }
 
   function choose(qi, id) {
@@ -108,7 +175,7 @@
     if (perfect) {
       sfx.success()
       setTimeout(() => sfx.roundComplete(), 450)
-      celebrateOver(plotPanel, streak >= 3 ? `${streak} IN A ROW!` : 'PERFECT!')
+      celebrateOver(plotPanel, streak >= 3 ? fmt(t.cheerStreak, { n: streak }) : t.cheerPerfect)
     } else {
       sfx.fail()
       shakeKey++
@@ -143,7 +210,7 @@
     showOptions = false
     if (settingsDirty) {
       settingsDirty = false
-      if (!checked && Object.keys(answers).length === 0) nextRound()
+      if (untouched()) nextRound()
     }
   }
   function resetRun() {
@@ -198,34 +265,35 @@
 <div
   class="game"
   role="application"
-  aria-label="Filter quiz game mode"
+  aria-label={t.app}
   style:background-image={`url(${import.meta.env.BASE_URL}game/background.jpg)`}
 >
   <div class="frame">
     <header>
-      <h1><span class="coin" aria-hidden="true"></span>FILTER QUIZ</h1>
+      <h1><span class="coin" aria-hidden="true"></span>{t.title}</h1>
       <div class="hud">
-        <div class="hud-box"><span class="k">ROUND</span><span class="v">{roundNo}</span></div>
-        <div class="hud-box"><span class="k">SCORE</span><span class="v score">{score}</span></div>
-        <div class="hud-box" class:hot={streak >= 2}><span class="k">STREAK</span><span class="v">{streak}{streak >= 2 ? '🔥' : ''}</span></div>
-        <div class="hud-box"><span class="k">ACC</span><span class="v">{accuracy == null ? '--' : `${accuracy}%`}</span></div>
-        <div class="hud-box best"><span class="k">BEST</span><span class="v">{best.score}</span></div>
+        <div class="hud-box"><span class="k">{t.round}</span><span class="v">{roundNo}</span></div>
+        <div class="hud-box"><span class="k">{t.score}</span><span class="v score">{score}</span></div>
+        <div class="hud-box" class:hot={streak >= 2}><span class="k">{t.streak}</span><span class="v">{streak}{streak >= 2 ? '🔥' : ''}</span></div>
+        <div class="hud-box"><span class="k">{t.acc}</span><span class="v">{accuracy == null ? '--' : `${accuracy}%`}</span></div>
+        <div class="hud-box best"><span class="k">{t.best}</span><span class="v">{best.score}</span></div>
       </div>
       <div class="actions">
-        <button class="px-btn small" on:click={toggleSound} aria-pressed={soundOn} title={soundOn ? 'Mute sound' : 'Unmute sound'}>
-          {soundOn ? 'SFX ON' : 'SFX OFF'}
+        <button class="px-btn small" on:click={toggleSound} aria-pressed={soundOn} title={soundOn ? t.mute : t.unmute}>
+          {soundOn ? t.sfxOn : t.sfxOff}
         </button>
         <button class="px-btn small" class:active={showOptions} on:click={() => { sfx.click(); if (showOptions) closeOptions(); else showOptions = true }} aria-expanded={showOptions}>
-          OPTIONS
+          {t.options}
         </button>
-        <button class="px-btn small exit" on:click={exit} title="Back to the normal mode">EXIT</button>
+        <LangSwitch variant="pixel" />
+        <button class="px-btn small exit" on:click={exit} title={t.exitTitle}>{t.exit}</button>
       </div>
     </header>
 
     <div class="main" class:match={round?.kind === 'match'}>
       <section class="plot-panel" bind:this={plotPanel}>
         <div class="panel-head">
-          <span class="tag">GIVEN</span>
+          <span class="tag">{t.given}</span>
           <span class="view-title">{@html round ? pix(round.view.title) : '...'}</span>
         </div>
         <div class="given">{round ? givenLine(round.spec, round) : ' '}</div>
@@ -244,13 +312,13 @@
             <GamePlot {round} />
           {/if}
           {#if loading}
-            <div class="loading"><span>LOADING</span><span class="dots">...</span></div>
+            <div class="loading"><span>{t.loading}</span><span class="dots">...</span></div>
           {/if}
           {#if error}
             <div class="loading err">
-              <span>ENGINE ERROR</span>
+              <span>{t.engineError}</span>
               <small>{error}</small>
-              <button class="px-btn" on:click={nextRound}>RETRY</button>
+              <button class="px-btn" on:click={nextRound}>{t.retry}</button>
             </div>
           {/if}
         </div>
@@ -258,12 +326,12 @@
 
       <section class="q-panel">
         <div class="panel-head">
-          <span class="tag">QUEST</span>
+          <span class="tag">{t.quest}</span>
           <span class="view-title">{round
-            ? (round.kind === 'match' ? 'Match the plot'
-              : round.kind === 'lineup' ? 'Name each curve'
-              : round.kind === 'theory' ? 'Theory card'
-              : `${round.questions.length} question${round.questions.length === 1 ? '' : 's'}`)
+            ? (round.kind === 'match' ? t.headMatch
+              : round.kind === 'lineup' ? t.headLineup
+              : round.kind === 'theory' ? t.headTheory
+              : t.questions(round.questions.length))
             : ''}</span>
         </div>
 
@@ -283,8 +351,8 @@
                     <div class="q-prompt">
                       <span class="q-num">Q{qi + 1}</span>
                       {#if q.swatch}<span class="swatch" style:background={q.swatch} aria-hidden="true"></span>{/if}
-                      <span>{@html pix(q.prompt)}{#if q.multi}<span class="multi-hint"> · pick all that apply</span>{/if}</span>
-                      {#if checked}<span class="verdict">{ok ? 'OK' : 'X'}</span>{/if}
+                      <span>{@html pix(q.prompt)}{#if q.multi}<span class="multi-hint">{t.multi}</span>{/if}</span>
+                      {#if checked}<span class="verdict">{ok ? t.ok : t.bad}</span>{/if}
                     </div>
                     {#if q.type === 'match'}
                       <div class="cands" class:has-pick={!checked && isAnswered(q, answers[qi])}>
@@ -294,7 +362,7 @@
                             disabled={checked}
                             on:click={() => choose(qi, opt.id)}
                             aria-pressed={isPicked(q, qi, opt, answers)}
-                            aria-label={`Option ${oi + 1}`}
+                            aria-label={fmt(t.option, { n: oi + 1 })}
                           >
                             <span class="key">{oi + 1}</span>
                             {#if opt.tag}<span class="cand-tag">{opt.tag}</span>{/if}
@@ -328,7 +396,7 @@
                         class:open={openWhy[qi]}
                         aria-expanded={!!openWhy[qi]}
                         on:click={() => { sfx.click(); openWhy = { ...openWhy, [qi]: !openWhy[qi] } }}
-                      >{openWhy[qi] ? 'HIDE' : 'WHY?'}</button>
+                      >{openWhy[qi] ? t.hide : t.why}</button>
                       {#if openWhy[qi]}
                         <p class="why">{q.explain}</p>
                       {/if}
@@ -344,11 +412,11 @@
           {#if result}
             <div class="result" class:perfect={result.perfect}>
               <div class="r-top">
-                {result.perfect ? 'PERFECT!' : result.correct ? 'NOT BAD' : 'OUCH!'}
+                {result.perfect ? t.perfect : result.correct ? t.notBad : t.ouch}
                 <span class="gain">+{result.gained}</span>
               </div>
               <div class="r-sub">
-                {result.correct}/{result.total} right{result.bonus ? ` · streak bonus +${result.bonus}` : ''}
+                {fmt(t.right, { c: result.correct, t: result.total })}{result.bonus ? fmt(t.bonus, { b: result.bonus }) : ''}
               </div>
               {#if describeRound(round)}<div class="reveal">{describeRound(round)}</div>{/if}
             </div>
@@ -359,54 +427,54 @@
             disabled={!round || loading || (!checked && !allAnswered)}
             on:click={primary}
           >
-            {checked ? 'NEXT >>' : 'CHECK!'}
+            {checked ? t.next : t.check}
           </button>
-          <div class="hint">keys 1–9 answer · enter {checked ? 'next' : 'check'}</div>
+          <div class="hint">{fmt(t.hint, { what: checked ? t.hintNext : t.hintCheck })}</div>
         </div>
       </section>
     </div>
 
     {#if showOptions}
       <div class="options-overlay" on:click|self={closeOptions} role="presentation">
-        <div class="options-box" role="dialog" aria-label="Game options">
-          <div class="o-title">OPTIONS</div>
+        <div class="options-box" role="dialog" aria-label={t.dialog}>
+          <div class="o-title">{t.options}</div>
 
           <div class="o-group">
-            <div class="o-lbl">QUESTION TYPES</div>
+            <div class="o-lbl">{t.kinds}</div>
             <div class="chips">
-              {#each ROUND_KINDS as k}
+              {#each roundKinds as k}
                 <button class="chip" class:on={settings.kinds.includes(k.id)} on:click={() => toggleIn('kinds', k.id)}>{k.label}</button>
               {/each}
             </div>
           </div>
           <div class="o-group">
-            <div class="o-lbl">PLOTS</div>
+            <div class="o-lbl">{t.plots}</div>
             <div class="chips">
-              {#each VIEWS as v}
+              {#each views as v}
                 <button class="chip" class:on={settings.views.includes(v.id)} on:click={() => toggleIn('views', v.id)}>{v.label}</button>
               {/each}
             </div>
           </div>
           <div class="o-group">
-            <div class="o-lbl">FILTER TYPES</div>
+            <div class="o-lbl">{t.types}</div>
             <div class="chips">
-              {#each GAME_TYPES as t}
-                <button class="chip" class:on={settings.types.includes(t)} on:click={() => toggleIn('types', t)}>{TYPE_SHORT[t]}</button>
+              {#each GAME_TYPES as ft}
+                <button class="chip" class:on={settings.types.includes(ft)} on:click={() => toggleIn('types', ft)}>{TYPE_SHORT[ft]}</button>
               {/each}
             </div>
           </div>
           <div class="o-group">
-            <div class="o-lbl">APPROXIMATIONS</div>
+            <div class="o-lbl">{t.approxes}</div>
             <div class="chips">
               {#each GAME_APPROX as a}
-                <button class="chip" class:on={settings.approxes.includes(a)} on:click={() => toggleIn('approxes', a)}>{APPROX_LABELS[a]}</button>
+                <button class="chip" class:on={settings.approxes.includes(a)} on:click={() => toggleIn('approxes', a)}>{approxLabel(a, $lang)}</button>
               {/each}
             </div>
           </div>
-          <p class="o-note">Changes apply right away if the current round is still untouched, otherwise from the next one. Answers only list the approximations and types enabled here (a question with a single possible answer is skipped). Match rounds show 4 cards of mixed plot kinds, 1 to 4 of them from the given filter: magnitude, phase and pole-zero pair freely, the step response only with magnitude or pole-zero, and the group delay only as a card. Line-ups overlay 3–4 of the enabled approximations (at least 3 needed) on a magnitude, phase or pole-zero plot. Theory cards need no plot.</p>
+          <p class="o-note">{t.note}</p>
           <div class="o-actions">
-            <button class="px-btn" on:click={resetRun}>NEW RUN</button>
-            <button class="px-btn" on:click={() => { sfx.click(); closeOptions() }}>CLOSE</button>
+            <button class="px-btn" on:click={resetRun}>{t.newRun}</button>
+            <button class="px-btn" on:click={() => { sfx.click(); closeOptions() }}>{t.close}</button>
           </div>
         </div>
       </div>
@@ -499,7 +567,8 @@
     75% { transform: scaleX(0.55); }
   }
 
-  .hud { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+  /* Keep the 5 boxes on one row when they fit (412px = 5 × 76 + 4 × 8): the action buttons wrap first */
+  .hud { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; min-width: min(100%, 412px); }
   .hud-box {
     display: flex;
     flex-direction: column;
@@ -730,14 +799,15 @@
 
   /* Match rounds: the options panel gets more room for the 2×2 plot grid */
   .main.match { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
-  .q.match { flex: 1; display: flex; flex-direction: column; min-height: 420px; }
-  .q.match > .q-inner { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  /* Grow with the WHY? text instead of squeezing the cards (the list scrolls) */
+  .q.match { flex: 1 0 auto; display: flex; flex-direction: column; min-height: 420px; }
+  .q.match > .q-inner { flex: 1 0 auto; display: flex; flex-direction: column; }
   .cands {
-    flex: 1;
-    min-height: 0;
+    flex: 1 0 auto;
+    min-height: 340px;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-rows: repeat(2, minmax(160px, 1fr));
     gap: 8px;
   }
   .cand {

@@ -3,22 +3,63 @@
   import { get } from 'svelte/store'
   import {
     stages, filterParams, filterResult, bodeData, bodePoints, theme, activeTab, plotUnit, dataUnit,
-    remainingPZ, hoveredStageId,
+    remainingPZ, hoveredStageId, lang, colorMode, colorShuffle,
   } from '../../stores/app.js'
+  import { table, fmt } from '../../lib/i18n.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
-  import { freqAxis, freqRangeFromParams, sPlaneAxis, TWO_PI } from '../../lib/approx.js'
+  import { freqAxis, freqRangeFromParams, sPlaneAxis, TWO_PI, plotColor } from '../../lib/approx.js'
   import { colorOf } from '../../lib/stage-colors.js'
-  import { normOmega, resolveNorm, scaleRoots, poleSummary } from '../../lib/stage-math.js'
+  import { normOmega, resolveNorm, scaleRoots, poleSummary, passbandRefOmega } from '../../lib/stage-math.js'
   import { tfAbs, toDb } from '../../lib/poly.js'
   import {
     updateStage, resetAllStages, isModified, rootsModified, rootRef, parseRootRef, dragStageRoot, wheelStageQ,
-    autoStage, moveStage, previewStage, stagePreview, beginStagePreview, endStagePreview,
+    autoStage, moveStage, previewStage, stagePreview, beginStagePreview, endStagePreview, stageName,
   } from '../../lib/stages.js'
   import { stageDb } from '../../lib/stage-eval.js'
+  import { magAtZpk, designGain } from '../../lib/zpk-bode.js'
   import { formatSI } from '../../lib/si.js'
   import BodePlot from '../BodePlot.svelte'
   import PzMap from '../PzMap.svelte'
   import StageCard from '../StageCard.svelte'
+
+  const TX = {
+    en: {
+      designed: 'Designed filter', cascade: 'Cascade',
+      normPoint: '{name}: normalization point ({db} dB)',
+      unPoles: 'Unassigned poles', unZeros: 'Unassigned zeros',
+      nameDesigned: '{name} (designed)', ofPoles: '{name} poles', ofZeros: '{name} zeros',
+      refDC: 'DC', refHF: 'HF',
+      gain: 'gain {db}',
+      emptyStages: 'No stages yet: select poles / zeros in the Pole-Zero tab and press Add Stage.',
+      emptyTemplate: 'Enter a valid template first.',
+      readoutTitle: 'Cascade of all stages vs the designed filter, at the passband reference',
+      cascadeAt: 'Cascade @ {ref}:', target: 'target',
+      absorb: 'Absorb Δ', absorbTitle: 'Add Δ to the last stage\'s gain offset',
+      resetAll: 'Reset all', resetAllTitle: 'Reset every stage to how it was built',
+      root1: '{n} root not in a stage yet', rootN: '{n} roots not in a stage yet',
+      auto: 'Auto-stage', autoTitle: 'Split every unassigned root into 2nd / 1st-order sections, low Q first',
+    },
+    es: {
+      designed: 'Filtro diseñado', cascade: 'Cascada',
+      normPoint: '{name}: punto de normalización ({db} dB)',
+      unPoles: 'Polos sin asignar', unZeros: 'Ceros sin asignar',
+      nameDesigned: '{name} (diseñada)', ofPoles: 'Polos {name}', ofZeros: 'Ceros {name}',
+      refDC: 'ω→0', refHF: 'ω→∞',
+      gain: 'ganancia {db}',
+      emptyStages: 'Todavía no hay etapas: seleccione polos / ceros en la pestaña Polos y ceros y presione Agregar etapa.',
+      emptyTemplate: 'Primero ingrese una plantilla válida.',
+      readoutTitle: 'Cascada de todas las etapas frente al filtro diseñado, en la referencia de la banda de paso',
+      cascadeAt: 'Cascada @ {ref}:', target: 'objetivo',
+      absorb: 'Absorber Δ', absorbTitle: 'Sumar Δ al ajuste de ganancia de la última etapa',
+      resetAll: 'Restablecer todo', resetAllTitle: 'Volver cada etapa a como se armó',
+      root1: '{n} raíz todavía sin etapa', rootN: '{n} raíces todavía sin etapa',
+      auto: 'Armar etapas', autoTitle: 'Separar todas las raíces sin asignar en etapas de 2.º / 1.er orden, de menor a mayor Q',
+    },
+  }
+  $: tx = table(TX, $lang)
+  // Stage colours steer clear of the main filter's colour (lib/stage-colors.js)
+  $: mainColor = plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle)
+  $: stageCol = (s, i, th = $theme) => colorOf(s, i, th, mainColor)
 
   $: ft     = $filterParams?.filter_type ?? 0
   $: axis   = freqAxis($plotUnit)
@@ -67,19 +108,19 @@
   let traces = []
   let ghostFor = null
   $: preview = $stagePreview
-  $: if (!preview) { ghostFor = null; traces = buildTraces($stages, bodes, $bodeData, axis, $theme, hovered, null) }
+  $: if (!preview) { ghostFor = null; traces = buildTraces($stages, bodes, $bodeData, axis, $theme, hovered, null, tx) }
   // Entering a preview: one re-render with that stage and the cascade ghosted, then frozen.
   $: if (preview && ghostFor !== preview.id) {
     ghostFor = preview.id
-    traces = buildTraces($stages, bodes, $bodeData, axis, $theme, null, preview.id)
+    traces = buildTraces($stages, bodes, $bodeData, axis, $theme, null, preview.id, tx)
   }
 
-  function buildTraces(list, bmap, designed, ax, th, hov, ghostId) {
+  function buildTraces(list, bmap, designed, ax, th, hov, ghostId, t) {
     const out = []
     const light = th === 'light'
     if (designed) {
       out.push({
-        x: designed.freq.map(f => f * ax.scale), y: dbArr(designed), mode: 'lines', name: 'Designed filter',
+        x: designed.freq.map(f => f * ax.scale), y: dbArr(designed), mode: 'lines', name: t.designed,
         line: { color: light ? '#8c959f' : '#6e7681', width: 4 }, opacity: 0.35, hoverinfo: 'skip',
       })
     }
@@ -88,8 +129,8 @@
       if (!b) return
       const on = hov === s.id && ghostId == null, dim = (hov != null && !on) || s.id === ghostId
       out.push({
-        x: b.freq.map(f => f * ax.scale), y: dbArr(b), mode: 'lines', name: s.name,
-        line: { color: colorOf(s, i, th), width: on ? 3 : 1.6 }, opacity: s.id === ghostId ? 0.22 : dim ? 0.3 : 1,
+        x: b.freq.map(f => f * ax.scale), y: dbArr(b), mode: 'lines', name: stageName(s.name, $lang),
+        line: { color: stageCol(s, i, th), width: on ? 3 : 1.6 }, opacity: s.id === ghostId ? 0.22 : dim ? 0.3 : 1,
       })
     })
     // Cascade = point-wise sum of stage dB, once every stage has a curve
@@ -101,7 +142,7 @@
         return sum
       })
       out.push({
-        x: bs[0].freq.map(f => f * ax.scale), y, mode: 'lines', name: 'Cascade',
+        x: bs[0].freq.map(f => f * ax.scale), y, mode: 'lines', name: t.cascade,
         line: { color: light ? '#24292f' : '#e6edf3', width: 2, dash: 'dot' }, opacity: ghostId != null ? 0.22 : 1,
       })
     }
@@ -116,8 +157,8 @@
       if (!Number.isFinite(y)) return
       out.push({
         x: [fHz * ax.scale], y: [y], mode: 'markers', showlegend: false, hoverinfo: 'text',
-        text: [`${s.name}: normalization point (${(s.gainDb ?? 0).toFixed(2)} dB)`],
-        marker: { symbol: 'diamond', size: hov === s.id ? 11 : 8, color: colorOf(s, i, th), line: { width: 1, color: light ? '#ffffff' : '#0d1117' } },
+        text: [fmt(t.normPoint, { name: stageName(s.name, $lang), db: (s.gainDb ?? 0).toFixed(2) })],
+        marker: { symbol: 'diamond', size: hov === s.id ? 11 : 8, color: stageCol(s, i, th), line: { width: 1, color: light ? '#ffffff' : '#0d1117' } },
         opacity: hov != null && hov !== s.id ? 0.3 : 1,
       })
     })
@@ -125,26 +166,22 @@
   }
 
   // ── Cascade vs target at the passband reference ───────────────────────────
-  $: refW = (() => {
-    const n = resolveNorm('Passband', ft)
-    if (n === 'ω→0') return 0
-    if (n === 'ω→∞') return Infinity
-    const wp = $filterParams?.wp
-    return Array.isArray(wp) ? Math.sqrt(wp[0] * wp[1]) : null
-  })()
-  $: refText = refW === 0 ? 'DC' : refW === Infinity ? 'HF' : refW != null ? `${formatSI((refW / TWO_PI) * ($dataUnit === 'rad' ? TWO_PI : 1))} ${$dataUnit === 'rad' ? 'rad/s' : 'Hz'}` : ''
+  $: refW = passbandRefOmega($filterParams)
+  $: refText = refW === 0 ? tx.refDC : refW === Infinity ? tx.refHF : refW != null ? `${formatSI((refW / TWO_PI) * ($dataUnit === 'rad' ? TWO_PI : 1))} ${$dataUnit === 'rad' ? 'rad/s' : 'Hz'}` : ''
   $: readout = (() => {
     if (!$stages.length || refW == null || !$filterResult) return null
     let cas = 1
     for (const s of $stages) { if (!s.num) return null; cas *= tfAbs(s.num, s.den, refW) }
-    const tgt = tfAbs($filterResult.num, $filterResult.den, refW)
+    // Designed filter from its zeros / poles (exact at high order, see lib/zpk-bode.js)
+    const tgt = magAtZpk($filterResult.zeros, $filterResult.poles, designGain($filterResult), refW)
     const c = toDb(cas), t = toDb(tgt)
     return { c, t, d: Number.isFinite(c) && Number.isFinite(t) ? t - c : null }
   })()
   $: unassigned = ($remainingPZ.poles?.length ?? 0) + ($remainingPZ.zeros?.length ?? 0)
   $: anyEdited = $stages.some(isModified)
 
-  const fmtDb = v => (Number.isFinite(v) ? `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} dB` : '—')
+  // Rounds to 0.00 without a stray sign (−0.00)
+  const fmtDb = v => (Number.isFinite(v) ? `${v >= -0.005 ? '+' : '−'}${Math.abs(v) < 0.005 ? '0.00' : Math.abs(v).toFixed(2)} dB` : '—')
 
   // E4: put the cascade-vs-target difference into the last stage's gain offset.
   function absorbGain() {
@@ -158,17 +195,18 @@
   $: mapGroups = (() => {
     const out = []
     const grey = $theme === 'light' ? '#8c959f' : '#6e7681'
-    out.push({ roots: ($remainingPZ.poles ?? []).map(r => ({ re: r.re, im: r.im })), symbol: 'x', color: grey, size: 7, opacity: 0.6, name: 'Unassigned poles' })
-    out.push({ roots: ($remainingPZ.zeros ?? []).map(r => ({ re: r.re, im: r.im })), symbol: 'circle-open', color: grey, size: 7, opacity: 0.6, name: 'Unassigned zeros' })
+    out.push({ roots: ($remainingPZ.poles ?? []).map(r => ({ re: r.re, im: r.im })), symbol: 'x', color: grey, size: 7, opacity: 0.6, name: tx.unPoles })
+    out.push({ roots: ($remainingPZ.zeros ?? []).map(r => ({ re: r.re, im: r.im })), symbol: 'circle-open', color: grey, size: 7, opacity: 0.6, name: tx.unZeros })
     $stages.forEach((s, i) => {
-      const col = colorOf(s, i, $theme)
+      const col = stageCol(s, i, $theme)
       const on = hovered === s.id, dim = hovered != null && !on
+      const name = stageName(s.name, $lang)
       if (rootsModified(s)) {
-        out.push({ roots: asRoots(s.orig.poles), symbol: 'x', color: col, size: 7, opacity: 0.3, name: `${s.name} (designed)` })
-        out.push({ roots: asRoots(s.orig.zeros), symbol: 'circle-open', color: col, size: 7, opacity: 0.3, name: `${s.name} (designed)` })
+        out.push({ roots: asRoots(s.orig.poles), symbol: 'x', color: col, size: 7, opacity: 0.3, name: fmt(tx.nameDesigned, { name }) })
+        out.push({ roots: asRoots(s.orig.zeros), symbol: 'circle-open', color: col, size: 7, opacity: 0.3, name: fmt(tx.nameDesigned, { name }) })
       }
-      out.push({ roots: asRoots(s.poles, i => rootRef(s.id, 'p', i)), symbol: 'x', color: col, size: on ? 13 : 10, opacity: dim ? 0.3 : 1, name: `${s.name} poles` })
-      out.push({ roots: asRoots(s.zeros, i => rootRef(s.id, 'z', i)), symbol: 'circle-open', color: col, size: on ? 13 : 10, opacity: dim ? 0.3 : 1, name: `${s.name} zeros` })
+      out.push({ roots: asRoots(s.poles, i => rootRef(s.id, 'p', i)), symbol: 'x', color: col, size: on ? 13 : 10, opacity: dim ? 0.3 : 1, name: fmt(tx.ofPoles, { name }) })
+      out.push({ roots: asRoots(s.zeros, i => rootRef(s.id, 'z', i)), symbol: 'circle-open', color: col, size: on ? 13 : 10, opacity: dim ? 0.3 : 1, name: fmt(tx.ofZeros, { name }) })
     })
     return out
   })()
@@ -253,7 +291,7 @@
       for (let i = 0; i < grid.length; i++) { let v = db[i]; for (const a of others) v += a[i] ?? NaN; cas[i] = v }
       stroke(cas, light ? '#24292f' : '#e6edf3', 2, [2, 4])
     }
-    stroke(db, colorOf(s, idx, $theme), 3, [])
+    stroke(db, stageCol(s, idx, $theme), 3, [])
     // Normalization point
     const wN = normOmega(s, ft)
     if (wN != null) {
@@ -261,7 +299,7 @@
       const yN = wN === 0 ? db[0] : wN === Infinity ? db[grid.length - 1] : stageDb(s, ft, [fN])[0]
       if (Number.isFinite(yN)) {
         const x = X(fN), y = Y(yN), r = 6
-        ctx.setLineDash([]); ctx.fillStyle = colorOf(s, idx, $theme); ctx.strokeStyle = light ? '#ffffff' : '#0d1117'; ctx.lineWidth = 1
+        ctx.setLineDash([]); ctx.fillStyle = stageCol(s, idx, $theme); ctx.strokeStyle = light ? '#ffffff' : '#0d1117'; ctx.lineWidth = 1
         ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); ctx.fill(); ctx.stroke()
       }
     }
@@ -357,7 +395,7 @@
     const uf = $dataUnit === 'rad' ? TWO_PI : 1
     dragLabel = {
       x: px + 14, y: py - 30,
-      text: `${w0 ? `${$dataUnit === 'rad' ? 'ω' : 'f'}₀ ${formatSI((w0 / TWO_PI) * uf)} ${$dataUnit === 'rad' ? 'rad/s' : 'Hz'} · ` : ''}gain ${fmtDb(cdrag.gainDb + dDb)}`,
+      text: `${w0 ? `${$dataUnit === 'rad' ? 'ω' : 'f'}₀ ${formatSI((w0 / TWO_PI) * uf)} ${$dataUnit === 'rad' ? 'rad/s' : 'Hz'} · ` : ''}${fmt(tx.gain, { db: fmtDb(cdrag.gainDb + dDb) })}`,
     }
   }
   function endCurveDrag() {
@@ -447,12 +485,26 @@
 
   $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$'
   $: xRange = [freqRange.min * axis.scale, freqRange.max * axis.scale]
+
+  // The y axis stays where it was fitted while stages are moved / re-tuned (drag,
+  // wheel, card edits): it only re-fits for a new design, a stage added or
+  // removed, or a unit change. User zoom is kept as usual (uirevision).
+  let stickyY = null
+  $: stageIds = $stages.map(st => st.id).join(',')
+  $: $filterResult, stageIds, $plotUnit, (stickyY = null)
+  function onBodeRendered() {
+    if (stickyY || frozenY || !gd) return
+    // Fit only once every stage curve is in (their Bodes arrive asynchronously)
+    if (pendingBode.size || $stages.some(st => !bodes.get(st.id)?.bode)) return
+    const r = gd._fullLayout?.yaxis?.range
+    if (r?.every(Number.isFinite)) stickyY = r.slice()
+  }
 </script>
 
 <div class="stages-tab">
   <div class="bode">
-    <BodePlot bind:this={plot} {traces} {yLabel} {xRange} yRange={frozenY} xLabel={axis.xLabel} uirevision={`stages-${$plotUnit}`}
-      filename="filtool_stages" {active}>
+    <BodePlot bind:this={plot} {traces} {yLabel} {xRange} yRange={frozenY ?? stickyY} xLabel={axis.xLabel} uirevision={`stages-${$plotUnit}`}
+      filename="filtool_stages" {active} on:rendered={onBodeRendered}>
       <canvas class="stage-overlay" bind:this={overlay} aria-hidden="true"></canvas>
       {#if dragLabel}
         <div class="drag-label" style="left: {dragLabel.x}px; top: {dragLabel.y}px">{dragLabel.text}</div>
@@ -460,9 +512,9 @@
       {#if !$stages.length}
         <div class="empty">
           {#if $filterResult}
-            No stages yet: select poles / zeros in the Pole-Zero tab and press Add Stage.
+            {tx.emptyStages}
           {:else}
-            Design a filter first.
+            {tx.emptyTemplate}
           {/if}
         </div>
       {/if}
@@ -471,7 +523,7 @@
 
   <aside class="side">
     <div class="map">
-      <PzMap groups={mapGroups} scale={sAxis.scale} compact {active} resetKey={$filterResult}
+      <PzMap groups={mapGroups} scale={sAxis.scale} compact {active} resetKey={$filterResult} stickyRange
         filename="filtool_stages_pz" canDrag={isStageRoot} canWheel={isStagePole}
         on:hover={onMapHover} on:dragstart={onMapDragStart} on:drag={onMapDrag} on:dragend={onMapDragEnd}
         on:click={onMapClickRoot} on:wheel={onMapWheel} />
@@ -479,21 +531,21 @@
 
     <div class="bar">
       {#if readout}
-        <div class="readout" title="Cascade of all stages vs the designed filter, at the passband reference">
-          Cascade @ {refText}: <b>{fmtDb(readout.c)}</b> · target <b>{fmtDb(readout.t)}</b>
+        <div class="readout" title={tx.readoutTitle}>
+          {fmt(tx.cascadeAt, { ref: refText })} <b>{fmtDb(readout.c)}</b> · {tx.target} <b>{fmtDb(readout.t)}</b>
           {#if readout.d != null}· Δ <b class:off={Math.abs(readout.d) > 0.01}>{fmtDb(readout.d)}</b>{/if}
         </div>
       {/if}
       <div class="actions">
         <button disabled={!readout || readout.d == null || Math.abs(readout.d) < 1e-3} on:click={absorbGain}
-          title="Add Δ to the last stage's gain offset">Absorb Δ</button>
-        <button disabled={!anyEdited} on:click={resetAllStages} title="Reset every stage to how it was built">Reset all</button>
+          title={tx.absorbTitle}>{tx.absorb}</button>
+        <button disabled={!anyEdited} on:click={resetAllStages} title={tx.resetAllTitle}>{tx.resetAll}</button>
       </div>
       {#if unassigned}
         <div class="note">
-          {unassigned} root{unassigned === 1 ? '' : 's'} not in a stage yet
+          {fmt(unassigned === 1 ? tx.root1 : tx.rootN, { n: unassigned })}
           <button class="link" disabled={autoBusy} on:click={onAutoStage}
-            title="Split every unassigned root into 2nd / 1st-order sections, low Q first">Auto-stage</button>
+            title={tx.autoTitle}>{tx.auto}</button>
         </div>
       {/if}
     </div>
@@ -501,7 +553,7 @@
     <div class="cards">
       {#each $stages as s, i (s.id)}
         <div class="card-slot" class:reordering={reorderId === s.id}>
-          <StageCard stage={s} color={colorOf(s, i, $theme)} filterType={ft} on:grab={e => onGrab(s.id, e)} />
+          <StageCard stage={s} color={stageCol(s, i, $theme)} filterType={ft} on:grab={e => onGrab(s.id, e)} />
         </div>
       {/each}
     </div>

@@ -85,6 +85,27 @@ const NORM_TEXT = {
 
 export const NORM_OPTIONS = ['Passband', 'ω→0', 'ω→∞', 'ω→ω0']
 
+/**
+ * Normalizations that work for these roots (normProblem), plus `keep` (the
+ * current choice) so a select never shows blank. 'Passband' first when valid.
+ */
+export function normOptions(filterType, zeros, poles, keep = null) {
+  return NORM_OPTIONS.filter(n => n === keep || !normProblem(n, filterType, zeros, poles))
+}
+
+/**
+ * ω (rad/s) where a design's passband gain is read: 0 for LP / BR, Infinity
+ * for HP, the band centre √(ωp1·ωp2) for BP. null without a usable band.
+ */
+export function passbandRefOmega(params) {
+  if (!params) return null
+  const n = resolveNorm('Passband', params.filter_type)
+  if (n === 'ω→0') return 0
+  if (n === 'ω→∞') return Infinity
+  const wp = params.wp
+  return Array.isArray(wp) ? Math.sqrt(wp[0] * wp[1]) : null
+}
+
 /** Descriptive label for a normalization choice. */
 export function normLabel(normtype, filterType) {
   if (normtype === 'Passband') return `Auto: ${NORM_TEXT[resolveNorm(normtype, filterType)]}`

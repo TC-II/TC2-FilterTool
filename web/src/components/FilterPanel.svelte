@@ -1,31 +1,80 @@
 <script>
   import { TWO_PI } from '../lib/approx.js'
-  import { runDesign, liveDenorm } from '../lib/design-action.js'
+  import { liveDenorm } from '../lib/design-action.js'
   import {
-    LP, HP, BP, BR, GD, F0_BW, FREQS, MAX_ORDER, GD_APPROX,
-    isBand as isBandType, buildParams, formFromParams, rescaleForm, validateForm, switchFilterType, paramsClose,
+    LP, HP, BP, BR, GD, F0_BW, FREQS, allowedApprox, defaultApprox,
+    isBand as isBandType, formFromParams, rescaleForm, validateForm, switchFilterType,
   } from '../lib/params.js'
   import {
-    designForm, filterParams, filterResult, uiEnabled, pendingFormHydration, dataUnit,
-    designBusy, designError, liveMode, liveAdjusting,
+    designForm, pendingFormHydration, dataUnit, designError, lang,
   } from '../stores/app.js'
+  import { table, fmt, typeName, TYPE_SHORT } from '../lib/i18n.js'
   import Segmented  from './form/Segmented.svelte'
-  import OrderRange from './form/OrderRange.svelte'
   import NumField   from './form/NumField.svelte'
   import ApproxTiles from './form/ApproxTiles.svelte'
 
+  // ── Strings ───────────────────────────────────────────────────────────────
+  const TX = {
+    en: {
+      specs: 'Specs', template: 'Template', output: 'Output',
+      filterType: 'Filter type', defineBy: 'Define band by',
+      f0bw: 'f₀ + BW', f0bwTitle: 'Define the band by its centre frequency and bandwidths',
+      edges: 'Edges', edgesTitle: 'Define the band by its four edge frequencies',
+      gdNA: 'not available for group delay',
+      magNA: 'only for low-pass and group delay',
+      fref: '{f} ref',
+      fp: '{f}p (pass)', fa: '{f}a (stop)',
+      f0Title: 'Centre frequency, {u}',
+      bwp: 'BWp', bwpTitle: 'Passband width, {u} (drag the label to adjust)',
+      bwa: 'BWa', bwaTitle: 'Stopband width, {u} (drag the label to adjust)',
+      passEdge: 'Passband', stopEdge: 'Stopband', low: '1 (low)', high: '2 (high)',
+      edgeTitle: '{kind} edge {which}, {u}',
+      ripple: 'Ripple', rippleTitle: '',
+      atten: 'Attenuation', attenTitle: '',
+      gain: 'Gain',
+      denorm: 'Denorm', denormAria: 'Denormalization',
+      denormTitle: 'Where the normalization lands between the passband edge (0 %) and the stopband edge (100 %)',
+      denormGD: 'Not used for group delay: the design is set by τ₀, f ref and γ',
+    },
+    es: {
+      specs: 'Especificaciones', template: 'Plantilla', output: 'Salida',
+      filterType: 'Tipo de filtro', defineBy: 'Definir la banda por',
+      f0bw: 'f₀ + B', f0bwTitle: 'Definir la banda por su frecuencia central y sus anchos de banda',
+      edges: 'Bordes', edgesTitle: 'Definir la banda por sus cuatro frecuencias de borde',
+      gdNA: 'no disponible para retardo de grupo',
+      magNA: 'solo para pasa-bajos y retardo de grupo',
+      fref: '{f} ref',
+      fp: '{f}p (paso)', fa: '{f}a (atenuación)',
+      f0Title: 'Frecuencia central, {u}',
+      bwp: 'Bp', bwpTitle: 'Ancho de la banda de paso, {u} (arrastre la etiqueta para ajustar)',
+      bwa: 'Ba', bwaTitle: 'Ancho de la banda de atenuación, {u} (arrastre la etiqueta para ajustar)',
+      passEdge: 'Frecuencia de paso', stopEdge: 'Frecuencia de atenuación', low: '1 (inferior)', high: '2 (superior)',
+      edgeTitle: '{kind} {which}, {u}',
+      ripple: 'Ap', rippleTitle: 'Ap: atenuación máxima en la banda de paso (arrastre para ajustar)',
+      atten: 'Aa', attenTitle: 'Aa: atenuación mínima en la banda de atenuación (arrastre para ajustar)',
+      gain: 'Ganancia',
+      denorm: 'Desnorm.', denormAria: 'Desnormalización',
+      denormTitle: 'Dónde cae la normalización entre la frecuencia de paso (0 %) y la de atenuación (100 %)',
+      denormGD: 'No se usa en retardo de grupo: el diseño queda fijado por τ₀, f ref y γ',
+    },
+  }
+  $: tx = table(TX, $lang)
+
   // ── Constants ─────────────────────────────────────────────────────────────
   // Response-shape glyphs, 24×12 viewBox.
-  const TYPE_OPTIONS = [
-    { value: LP, label: 'LP', title: 'Low-pass',    glyph: 'M1 3 H11 L17 10 H23' },
-    { value: HP, label: 'HP', title: 'High-pass',   glyph: 'M1 10 H7 L13 3 H23' },
-    { value: BP, label: 'BP', title: 'Band-pass',   glyph: 'M1 10 H5 L9 3 H15 L19 10 H23' },
-    { value: BR, label: 'BR', title: 'Band-reject', glyph: 'M1 3 H6 L10 10 H14 L18 3 H23' },
-    { value: GD, label: 'GD', title: 'Group delay', glyph: 'M1 6 H23 M3 2.5 V9.5 M21 2.5 V9.5' },
+  const TYPE_GLYPHS = [
+    'M1 3 H11 L17 10 H23',
+    'M1 10 H7 L13 3 H23',
+    'M1 10 H5 L9 3 H15 L19 10 H23',
+    'M1 3 H6 L10 10 H14 L18 3 H23',
+    'M1 6 H23 M3 2.5 V9.5 M21 2.5 V9.5',
   ]
-  const DEFINE_OPTIONS = [
-    { value: F0_BW, label: 'f₀ + BW', title: 'Define the band by its centre frequency and bandwidths' },
-    { value: FREQS, label: 'Edges', title: 'Define the band by its four edge frequencies' },
+  $: TYPE_OPTIONS = [LP, HP, BP, BR, GD].map(v => (
+    { value: v, label: TYPE_SHORT[v], title: typeName(v, $lang), glyph: TYPE_GLYPHS[v] }
+  ))
+  $: DEFINE_OPTIONS = [
+    { value: F0_BW, label: tx.f0bw, title: tx.f0bwTitle },
+    { value: FREQS, label: tx.edges, title: tx.edgesTitle },
   ]
 
   // ── Units ─────────────────────────────────────────────────────────────────
@@ -53,29 +102,22 @@
   $: ft         = $designForm.filterType
   $: isBand     = isBandType(ft)
   $: isGD       = ft === GD
-  $: formErrors = validateForm($designForm)
-  $: hasErrors  = Object.keys(formErrors).length > 0
+  $: formErrors = validateForm($designForm, $lang)
   /** First validation message of the band fields (shown under their one-row layout). */
   $: bandError = ['f0', 'bwp', 'bwa', 'fp1', 'fp2', 'fa1', 'fa2'].map(k => formErrors[k]).find(Boolean) ?? ''
-  /** Form differs from the last successful design. */
-  // Not stale mid live-denorm: the form's denorm leads the design until release.
-  $: stale = !$liveAdjusting && !!$filterParams && !hasErrors && !paramsClose(buildParams($designForm, toRad), $filterParams)
 
   function onTypeChange(e) {
     designForm.update(f => {
       const next = switchFilterType(f, e.detail)
-      // Group delay only supports Bessel / Gauss.
-      if (e.detail === GD && !GD_APPROX.has(next.approxType)) next.approxType = 5
+      // GD only supports Bessel / Gauss; HP / BP / BR everything but them.
+      const allow = allowedApprox(e.detail)
+      if (allow && !allow.has(next.approxType)) next.approxType = defaultApprox(e.detail)
       return next
     })
   }
 
   function setApprox(i) {
     designForm.update(f => ({ ...f, approxType: i }))
-  }
-
-  function onOrderChange(e) {
-    designForm.update(f => ({ ...f, nMin: e.detail.lo, nMax: e.detail.hi }))
   }
 
   // Apply params from Save/Load without re-running Design.
@@ -86,12 +128,9 @@
 
   // ── Submit ────────────────────────────────────────────────────────────────
   // Editing the form clears the last engine error (depends on $designForm only).
+  // Every edit re-designs by itself (lib/design-action.js, live updates).
   const clearError = () => designError.set('')
   $: clearError($designForm)
-
-  function design() {
-    if (!hasErrors) runDesign()
-  }
 
   // ── Live denorm (T3): see liveDenorm in lib/design-action.js ──────────────
   function onDenormInput() {
@@ -106,54 +145,44 @@
 <div class="fp">
 
   <!-- ── Specs ─────────────────────────────────────────────────────────── -->
-  <div class="group">Specs</div>
+  <div class="group">{tx.specs}</div>
 
-  <Segmented options={TYPE_OPTIONS} value={ft} ariaLabel="Filter type" on:change={onTypeChange} />
+  <Segmented options={TYPE_OPTIONS} value={ft} ariaLabel={tx.filterType} on:change={onTypeChange} />
 
   <ApproxTiles
     value={$designForm.approxType}
-    allowed={isGD ? GD_APPROX : null}
-    disabledTitle="not available for group delay"
+    allowed={allowedApprox(ft)}
+    disabledTitle={isGD ? tx.gdNA : tx.magNA}
     on:change={e => setApprox(e.detail)}
   />
   {#if formErrors.approxType}<p class="hint">{formErrors.approxType}</p>{/if}
 
-  <div class="order-row">
-    <span class="lbl">Order</span>
-    <span class="order-val">N {$designForm.nMin}–{$designForm.nMax}</span>
-  </div>
-  <OrderRange
-    lo={$designForm.nMin} hi={$designForm.nMax} min={1} max={MAX_ORDER}
-    designed={$filterResult?.N ?? null} {stale}
-    on:change={onOrderChange}
-  />
-  {#if formErrors.nMin || formErrors.nMax}<p class="hint">{formErrors.nMin || formErrors.nMax}</p>{/if}
 
   <!-- ── Template ──────────────────────────────────────────────────────── -->
   <div class="group group-row">
-    <span>Template{#if isBand}<span class="unit-cap"> · {uLabel}</span>{/if}</span>
+    <span>{tx.template}{#if isBand}<span class="unit-cap"> · {uLabel}</span>{/if}</span>
     {#if isBand}
-      <Segmented size="sm" options={DEFINE_OPTIONS} bind:value={$designForm.defineWith} ariaLabel="Define band by" />
+      <Segmented size="sm" options={DEFINE_OPTIONS} bind:value={$designForm.defineWith} ariaLabel={tx.defineBy} />
     {/if}
   </div>
 
   {#if isGD}
     <NumField label="τ₀" bind:value={$designForm.tau0} unit="s" min={1e-12} max={1} error={formErrors.tau0} edge="tau0" group="centre" />
-    <NumField label="{fsym} ref" bind:value={$designForm.frg} unit={uLabel} min={fMin} max={fMax} error={formErrors.frg} edge="frg" group="pass" />
+    <NumField label={fmt(tx.fref, { f: fsym })} bind:value={$designForm.frg} unit={uLabel} min={fMin} max={fMax} error={formErrors.frg} edge="frg" group="pass" />
     <NumField label="γ" bind:value={$designForm.gamma} unit="%" min={0.01} max={99} log={false} step={0.5} error={formErrors.gamma} edge="gamma" group="pass" />
   {:else}
     {#if !isBand}
       <div class="pair">
-        <NumField layout="stack" label="{fsym}p (pass)" bind:value={$designForm.fp} edge="fp" group="pass" unit={uLabel} min={fMin} max={fMax} error={formErrors.fp} />
-        <NumField layout="stack" label="{fsym}a (stop)" bind:value={$designForm.fa} edge="fa" group="stop" unit={uLabel} min={fMin} max={fMax} error={formErrors.fa} />
+        <NumField layout="stack" label={fmt(tx.fp, { f: fsym })} bind:value={$designForm.fp} edge="fp" group="pass" unit={uLabel} min={fMin} max={fMax} error={formErrors.fp} />
+        <NumField layout="stack" label={fmt(tx.fa, { f: fsym })} bind:value={$designForm.fa} edge="fa" group="stop" unit={uLabel} min={fMin} max={fMax} error={formErrors.fa} />
       </div>
     {:else}
       <!-- One row, like LP / HP, so band types don't make the sidebar scroll; unit in the header -->
       {#if $designForm.defineWith === F0_BW}
         <div class="tri">
-          <NumField layout="stack" label="{fsym}₀" title="Centre frequency, {uLabel}" bind:value={$designForm.f0} edge="f0" group="centre" min={fMin} max={fMax} showHint={false} error={formErrors.f0} />
-          <NumField layout="stack" label="BWp" title="Passband width, {uLabel} (drag the label to adjust)" bind:value={$designForm.bwp} edge="bwp" group="pass" min={bwMin} max={fMax} showHint={false} error={formErrors.bwp} />
-          <NumField layout="stack" label="BWa" title="Stopband width, {uLabel} (drag the label to adjust)" bind:value={$designForm.bwa} edge="bwa" group="stop" min={bwMin} max={fMax} showHint={false} error={formErrors.bwa} />
+          <NumField layout="stack" label="{fsym}₀" title={fmt(tx.f0Title, { u: uLabel })} bind:value={$designForm.f0} edge="f0" group="centre" min={fMin} max={fMax} showHint={false} error={formErrors.f0} />
+          <NumField layout="stack" label={tx.bwp} title={fmt(tx.bwpTitle, { u: uLabel })} bind:value={$designForm.bwp} edge="bwp" group="pass" min={bwMin} max={fMax} showHint={false} error={formErrors.bwp} />
+          <NumField layout="stack" label={tx.bwa} title={fmt(tx.bwaTitle, { u: uLabel })} bind:value={$designForm.bwa} edge="bwa" group="stop" min={bwMin} max={fMax} showHint={false} error={formErrors.bwa} />
         </div>
         {#if bandError}<p class="hint">{bandError}</p>{/if}
       {:else}
@@ -162,7 +191,7 @@
           {#each (ft === BP ? ['fa1', 'fp1', 'fp2', 'fa2'] : ['fp1', 'fa1', 'fa2', 'fp2']) as k (k)}
             {@const pass = k.startsWith('fp')}
             <NumField layout="stack" label="{fsym}{pass ? 'p' : 'a'}{k.endsWith('1') ? '₁' : '₂'}"
-              title="{pass ? 'Passband' : 'Stopband'} edge {k.endsWith('1') ? '1 (low)' : '2 (high)'}, {uLabel}"
+              title={fmt(tx.edgeTitle, { kind: pass ? tx.passEdge : tx.stopEdge, which: k.endsWith('1') ? tx.low : tx.high, u: uLabel })}
               bind:value={$designForm[k]} edge={k} group={pass ? 'pass' : 'stop'} min={fMin} max={fMax} showHint={false} error={formErrors[k]} />
           {/each}
         </div>
@@ -171,22 +200,22 @@
     {/if}
 
     <div class="pair">
-      <NumField layout="stack" label="Ripple" bind:value={$designForm.apDb} edge="apDb" group="pass" unit="dB" min={0.001} max={40} log={false} step={0.1} error={formErrors.apDb} />
-      <NumField layout="stack" label="Attenuation" bind:value={$designForm.aaDb} edge="aaDb" group="stop" unit="dB" min={1} max={120} log={false} step={1} error={formErrors.aaDb} />
+      <NumField layout="stack" label={tx.ripple} title={tx.rippleTitle} bind:value={$designForm.apDb} edge="apDb" group="pass" unit="dB" min={0.001} max={40} log={false} step={0.1} error={formErrors.apDb} />
+      <NumField layout="stack" label={tx.atten} title={tx.attenTitle} bind:value={$designForm.aaDb} edge="aaDb" group="stop" unit="dB" min={1} max={120} log={false} step={1} error={formErrors.aaDb} />
     </div>
   {/if}
 
   <!-- ── Output ────────────────────────────────────────────────────────── -->
-  <div class="group">Output</div>
+  <div class="group">{tx.output}</div>
 
-  <NumField label="Gain" bind:value={$designForm.gainDb} unit="dB" min={-200} max={200} log={false} step={1} />
+  <NumField label={tx.gain} bind:value={$designForm.gainDb} unit="dB" min={-200} max={200} log={false} step={1} />
 
   <!-- Group delay has no denormalization: the engine scales the prototype by 1/τ₀ only. -->
   <div class="denorm-row" class:off={isGD}
-    title={isGD ? 'Not used for group delay: the design is set by τ₀, f ref and γ' : ''}>
-    <span class="lbl" title={isGD ? '' : 'Where the normalization lands between the passband edge (0 %) and the stopband edge (100 %)'}>Denorm</span>
+    title={isGD ? tx.denormGD : ''}>
+    <span class="lbl" title={isGD ? '' : tx.denormTitle}>{tx.denorm}</span>
     <div class="denorm">
-      <input class="slider" type="range" min="0" max="100" step="1" bind:value={$designForm.denorm} aria-label="Denormalization"
+      <input class="slider" type="range" min="0" max="100" step="1" bind:value={$designForm.denorm} aria-label={tx.denormAria}
         disabled={isGD}
         on:input={onDenormInput} on:change={onDenormRelease} on:pointerup={onDenormRelease} on:blur={onDenormRelease} />
       <span class="pct">{isGD ? '—' : `${$designForm.denorm}%`}</span>
@@ -196,22 +225,6 @@
   {#if $designError}
     <p class="err">{$designError}</p>
   {/if}
-
-  <div class="design-row">
-  <button
-    class="btn"
-    class:stale
-    disabled={!$uiEnabled || $designBusy || hasErrors}
-    title={hasErrors ? 'Fix the highlighted fields first' : stale ? 'The form changed since the last design' : ''}
-    on:click={design}
-  >
-    {$designBusy ? 'Computing…' : 'Design Filter'}
-    {#if stale && !$designBusy && !$liveMode}<span class="badge">out of date</span>{/if}
-  </button>
-  <label class="live" class:on={$liveMode} title="Live mode: re-design automatically whenever the form changes (Ctrl+Enter still designs)">
-    <input type="checkbox" bind:checked={$liveMode} /> Live
-  </label>
-  </div>
 
 </div>
 
@@ -264,18 +277,6 @@
     overflow-wrap: anywhere;
   }
 
-  /* Order */
-  .order-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: -0.35rem;
-  }
-  .order-val {
-    font-size: 0.82rem;
-    font-family: ui-monospace, 'SF Mono', Consolas, monospace;
-    color: var(--text);
-  }
 
   /* Denorm */
   .denorm-row.off { opacity: 0.4; }
@@ -343,42 +344,6 @@
     border: 2px solid var(--surface);
     box-shadow: 0 0 0 1px var(--border);
     cursor: pointer;
-  }
-
-  .design-row { display: flex; gap: 0.4rem; align-items: stretch; margin-top: 0.15rem; }
-  .design-row .btn { flex: 1; margin-top: 0; }
-  .live {
-    display: flex; align-items: center; gap: 0.3rem;
-    padding: 0 0.55rem; border-radius: 4px; cursor: pointer; user-select: none;
-    border: 1px solid var(--border); background: var(--bg);
-    font-size: 0.8rem; color: var(--text-muted);
-  }
-  .live.on { border-color: var(--success); color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--bg)); }
-  .live input { accent-color: var(--success); margin: 0; }
-  .btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    background: var(--accent-strong);
-    border: none;
-    border-radius: 4px;
-    color: #fff;
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 600;
-    padding: 0.5rem;
-    width: 100%;
-    margin-top: 0.15rem;
-  }
-  .btn:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn:disabled { background: var(--surface-2); color: var(--disabled); cursor: default; }
-  .badge {
-    font-size: 0.7rem;
-    font-weight: 600;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 999px;
-    padding: 0.05rem 0.45rem;
   }
 
   .err {

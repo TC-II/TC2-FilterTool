@@ -1,11 +1,11 @@
 <script>
   import { createEventDispatcher } from 'svelte'
 
-  /** @type {{ value: any, label: string, title?: string, glyph?: string }[]} */
+  /** @type {{ value: any, label: string, html?: string, title?: string, glyph?: string }[]} */
   export let options = []
   export let value
   export let ariaLabel = ''
-  /** 'sm' = compact inline control (e.g. in a section header). */
+  /** 'sm' = compact inline control (e.g. in a section header): a pill with a sliding thumb. */
   export let size = 'md'
 
   const dispatch = createEventDispatcher()
@@ -30,7 +30,16 @@
 </script>
 
 <!-- svelte-ignore a11y-interactive-supports-focus -->
-<div class="seg" class:sm={size === 'sm'} role="radiogroup" aria-label={ariaLabel} on:keydown={onKeydown}>
+<div
+  class="seg"
+  class:sm={size === 'sm'}
+  role="radiogroup"
+  aria-label={ariaLabel}
+  style:--n={options.length}
+  style:--i={Math.max(0, options.findIndex(o => o.value === value))}
+  on:keydown={onKeydown}
+>
+  {#if size === 'sm'}<span class="thumb" aria-hidden="true"></span>{/if}
   {#each options as o, i}
     <button
       type="button"
@@ -46,7 +55,7 @@
       {#if o.glyph}
         <svg viewBox="0 0 24 12" aria-hidden="true"><path d={o.glyph} /></svg>
       {/if}
-      <span>{o.label}</span>
+      {#if o.html}<span>{@html o.html}</span>{:else}<span>{o.label}</span>{/if}
     </button>
   {/each}
 </div>
@@ -89,8 +98,48 @@
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
-  .seg.sm { padding: 1px; gap: 1px; border-radius: 4px; }
-  .seg.sm button { font-size: 0.68rem; padding: 0.1rem 0.45rem; letter-spacing: 0; text-transform: none; }
+  /* Compact: equal-width segments, one thumb sliding between them (like the
+     header's unit / language switches) */
+  .seg.sm {
+    position: relative;
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 0;
+    height: 1.4rem;
+    padding: 2px;
+    border-radius: 5px;
+    background: var(--surface-2);
+    flex-shrink: 0;
+  }
+  .seg.sm .thumb {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: 2px;
+    width: calc((100% - 4px) / var(--n));
+    transform: translateX(calc(var(--i) * 100%));
+    border-radius: 3px;
+    background: var(--selected);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    transition: transform 0.18s ease-out;
+  }
+  .seg.sm button {
+    position: relative;
+    flex-direction: row;
+    padding: 0 0.55rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    transition: color 0.15s;
+  }
+  .seg.sm button:hover:not(.on) { background: transparent; color: var(--text-muted); }
+  .seg.sm button.on { background: transparent; box-shadow: none; color: var(--accent); font-weight: 700; }
+  .seg.sm :global(i) { font-family: 'Times New Roman', Georgia, serif; font-size: 0.85rem; font-weight: 400; }
+  .seg.sm :global(sub) { font-size: 0.6rem; line-height: 0; vertical-align: baseline; position: relative; top: 0.12em; margin-left: 0.05em; }
+  @media (prefers-reduced-motion: reduce) { .seg.sm .thumb { transition: none; } }
 
   svg {
     width: 1.5rem;

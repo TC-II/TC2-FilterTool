@@ -2,9 +2,11 @@
   import { onMount, onDestroy } from 'svelte'
   import {
     bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab,
-    plotUnit, dataUnit, designForm, hoveredFields, designBusy, templateDragging, liveAdjusting,
+    plotUnit, dataUnit, designForm, hoveredFields, designBusy, templateDragging, liveAdjusting, lang,
+    designError,
   } from '../../stores/app.js'
-  import { APPROX_NAMES, plotColor, compareLine, freqAxis, freqRangeFromParams, TWO_PI } from '../../lib/approx.js'
+  import { table, fmt, approxName } from '../../lib/i18n.js'
+  import { plotColor, compareLine, freqAxis, freqRangeFromParams, TWO_PI } from '../../lib/approx.js'
   import { GD, DEFAULT_FORM, buildParams, formFromParams, paramsClose, validateForm } from '../../lib/params.js'
   import { templateGeom, templateHandles, dragTo, compliance, transitionNear, symmetrizedGeom } from '../../lib/template.js'
   import { runDesign, liveDenorm, denormPreview } from '../../lib/design-action.js'
@@ -12,6 +14,32 @@
   import BodePlot from '../BodePlot.svelte'
 
   export let showTemplate = true
+
+  const TX = {
+    en: {
+      outside: 'Outside template',
+      bwp: 'BWp', bwa: 'BWa', denormLbl: 'Denorm = {d}%',
+      pass: 'Pass', passTitle: 'Worst-case margin above the passband limit',
+      stop: 'Stop', stopTitle: 'Worst-case margin below the stopband limit',
+      symTitle: 'With band edges the engine keeps the {centre} centre and tightens the looser {edge} edge so the band is geometrically symmetric; the design is made for that template',
+      symBP: ['passband', 'stop'], symBR: ['stopband', 'pass'],
+      sym: 'Dotted grey: symmetric template used by the design',
+      preview: 'Template preview · designs as soon as the template is valid',
+      updating: 'Updating…', lastGood: 'Last valid design',
+    },
+    es: {
+      outside: 'Fuera de la plantilla',
+      bwp: 'Bp', bwa: 'Ba', denormLbl: 'Desnorm. = {d}%',
+      pass: 'Paso', passTitle: 'Margen en el peor caso por encima del límite de la banda de paso',
+      stop: 'Atenuación', stopTitle: 'Margen en el peor caso por debajo del límite de la banda de atenuación',
+      symTitle: 'Con los bordes de banda, el motor conserva el centro de la {centre} y ajusta el borde más holgado de la {edge} para que la banda sea geométricamente simétrica; el diseño se hace para esa plantilla',
+      symBP: ['banda de paso', 'banda de atenuación'], symBR: ['banda de atenuación', 'banda de paso'],
+      sym: 'Gris punteado: plantilla simétrica usada por el diseño',
+      preview: 'Vista previa de la plantilla · se diseña apenas la plantilla es válida',
+      updating: 'Actualizando…', lastGood: 'Último diseño válido',
+    },
+  }
+  $: tx = table(TX, $lang)
 
   function toDb(v) {
     if (!(v > 0)) return null
@@ -25,7 +53,7 @@
   $: tabId  = showTemplate ? 'template' : 'magnitude'
 
   // ── Live template (from the form, not the last design) ───────────────────
-  $: formValid = Object.keys(validateForm($designForm)).length === 0
+  $: formValid = Object.keys(validateForm($designForm, $lang)).length === 0
   let lastGeom = null
   $: if (showTemplate && formValid) lastGeom = templateGeom($designForm, uf)
   // An invalid form keeps showing the last valid template.
@@ -69,7 +97,7 @@
   // Frozen while dragging a handle or previewing denorm; entering a preview
   // re-renders once with the published curve ghosted.
   let ghosted = false
-  $: if (!dragging && !previewing) { ghosted = false; traces = buildTraces(false, $bodeData, $comparisons, compDesign, axis, $theme, $colorMode, $colorShuffle, $compareDash, $filterParams) }
+  $: if (!dragging && !previewing) { ghosted = false; traces = buildTraces(false, $bodeData, $comparisons, compDesign, axis, $theme, $colorMode, $colorShuffle, $compareDash, $filterParams, tx) }
   $: if (previewing && !ghosted) { ghosted = true; traces = buildTraces(true) }
 
   function buildTraces(ghost) { return [
@@ -77,7 +105,7 @@
       x: $bodeData.freq.map(f => f * axis.scale),
       y: $bodeData.magnitude.map(toDb),
       mode: 'lines',
-      name: APPROX_NAMES[$filterParams?.approx_type ?? 0],
+      name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
       opacity: ghost ? 0.25 : 1,
     }] : []),
@@ -85,14 +113,14 @@
       x: c.bodeData.freq.map(f => f * axis.scale),
       y: c.bodeData.magnitude.map(toDb),
       mode: 'lines',
-      name: APPROX_NAMES[c.approxType],
+      name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
     })),
     ...($bodeData && !ghost && compDesign?.bad?.some(v => v !== null) ? [{
       x: $bodeData.freq.map(f => f * axis.scale),
       y: compDesign.bad,
       mode: 'lines',
-      name: 'Outside template',
+      name: tx.outside,
       line: { color: DANGER[$theme] ?? DANGER.dark, width: 3.5 },
       hoverinfo: 'skip',
     }] : []),
@@ -369,8 +397,8 @@
     if (field === 'apDb') return 'Ap'
     if (field === 'aaDb') return 'Aa'
     if (field === 'f0') return `${sym}₀`
-    if (field === 'bwp') return 'BWp'
-    if (field === 'bwa') return 'BWa'
+    if (field === 'bwp') return tx.bwp
+    if (field === 'bwa') return tx.bwa
     const m = field.match(/^f([pa])(\d)?$/)
     return m ? `${sym}${m[1]}${SUB[m[2]] ?? ''}` : field
   }
@@ -477,12 +505,12 @@
       const d = Math.round(Math.min(100, Math.max(0, raw)))
       if (d !== drag.d) { drag.d = d; drag.moved = true; liveDenorm.update(d) }
       curveGuide = { ...drag.gap, levelDb: drag.levelDb, d }
-      label = { x: px + 14, y: py - 30, text: `Denorm = ${d}%` }
+      label = { x: px + 14, y: py - 30, text: fmt(tx.denormLbl, { d }) }
       return
     }
-    const tx = px - drag.gx, ty = py - drag.gy
-    const xPlot = ax.xa.l2d(ax.xa.p2l(tx - ax.xa._offset))
-    const yDb   = ax.ya.l2d(ax.ya.p2l(ty - ax.ya._offset))
+    const hx = px - drag.gx, hy = py - drag.gy
+    const xPlot = ax.xa.l2d(ax.xa.p2l(hx - ax.xa._offset))
+    const yDb   = ax.ya.l2d(ax.ya.p2l(hy - ax.ya._offset))
     const next = dragTo(drag.startForm, drag.h, xPlot / axis.scale, yDb, uf)
     drag.moved = true
     designForm.set(next)
@@ -571,26 +599,28 @@
   {#if showTemplate && geom}
     <div class="tpl-overlay">
       {#if $bodeData && comp?.pass}
-        <span class="chip" class:bad={!comp.pass.ok} title="Worst-case margin above the passband limit">
-          Pass {comp.pass.ok ? '✓' : '✗'} <b>{fmtMargin(comp.pass)}</b>
+        <span class="chip" class:bad={!comp.pass.ok} title={tx.passTitle}>
+          {tx.pass} {comp.pass.ok ? '✓' : '✗'} <b>{fmtMargin(comp.pass)}</b>
         </span>
       {/if}
       {#if $bodeData && comp?.stop}
-        <span class="chip" class:bad={!comp.stop.ok} title="Worst-case margin below the stopband limit">
-          Stop {comp.stop.ok ? '✓' : '✗'} <b>{fmtMargin(comp.stop)}</b>
+        <span class="chip" class:bad={!comp.stop.ok} title={tx.stopTitle}>
+          {tx.stop} {comp.stop.ok ? '✓' : '✗'} <b>{fmtMargin(comp.stop)}</b>
         </span>
       {/if}
       {#if symGeom}
-        <span class="chip muted" title="With band edges the engine keeps the {geom.ft === 2 ? 'passband' : 'stopband'} centre and tightens the looser {geom.ft === 2 ? 'stop' : 'pass'} edge so the band is geometrically symmetric; the design is made for that template">
-          Dotted grey: symmetric template used by the design
+        <span class="chip muted" title={fmt(tx.symTitle, { centre: (geom.ft === 2 ? tx.symBP : tx.symBR)[0], edge: (geom.ft === 2 ? tx.symBP : tx.symBR)[1] })}>
+          {tx.sym}
         </span>
       {/if}
       {#if !$filterParams}
-        <span class="chip muted">Template preview · press Design</span>
+        <span class="chip muted">{tx.preview}</span>
+      {:else if stale && $designError}
+        <!-- The form can't be designed: say the plot is the previous design (error in the tooltip) -->
+        <span class="chip bad" title={$designError}>{tx.lastGood}</span>
       {:else if stale && !dragging && !$liveAdjusting}
-        <button class="chip action" disabled={$designBusy} on:click={runDesign}>
-          {$designBusy ? 'Designing…' : 'Out of date · Redesign'}
-        </button>
+        <!-- Live updates: the form re-designs by itself a moment after each edit -->
+        <span class="chip muted">{tx.updating}</span>
       {/if}
     </div>
     {#if label}
@@ -631,16 +661,6 @@
     background: var(--surface);
     color: var(--text-dim);
   }
-  .chip.action {
-    pointer-events: auto;
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.74rem;
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 16%, var(--surface));
-  }
-  .chip.action:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 26%, var(--surface)); }
-  .chip.action:disabled { opacity: 0.6; cursor: default; }
 
   .denorm-overlay { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; }
   .drag-label {

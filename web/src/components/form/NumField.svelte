@@ -4,7 +4,14 @@
   import SciInput from '../SciInput.svelte'
   import { createEventDispatcher } from 'svelte'
   import { scrub } from '../../lib/scrub.js'
-  import { hoveredFields } from '../../stores/app.js'
+  import { hoveredFields, lang } from '../../stores/app.js'
+  import { table, fmt } from '../../lib/i18n.js'
+
+  const TX = {
+    en: { drag: 'Drag to adjust {label}{per}; Shift = fine', per: ' ({step} {unit} per 4 px)' },
+    es: { drag: 'Arrastre para ajustar {label}{per}; Shift = fino', per: ' ({step} {unit} cada 4 px)' },
+  }
+  $: tx = table(TX, $lang)
 
   export let label
   export let value
@@ -40,7 +47,7 @@
 <div class="nf {layout}" class:linked on:mouseenter={enter} on:mouseleave={leave}>
   <span
     class="lbl"
-    title={title || `Drag to adjust ${label}${log ? '' : ` (${step} ${unit} per 4 px)`}; Shift = fine`}
+    title={title || fmt(tx.drag, { label, per: log ? '' : fmt(tx.per, { step, unit }) })}
     use:scrub={{ get: () => value, set: v => (value = v), done: () => dispatch('scrubend'), log, step, min, max }}
   >{#if group}<i class="mark {group}" aria-hidden="true"></i>{/if}{label}</span>
   <SciInput bind:value {unit} {min} {max} {si} logNudge={log} {step} invalid={!!error} on:change />

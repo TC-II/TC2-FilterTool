@@ -1,7 +1,44 @@
+<script module>
+  import Plotly from 'plotly.js-dist'
+
+  // Spanish mode-bar tooltips for Plotly. Only the dictionary: number
+  // formatting stays Plotly's default (decimal dot), as in the form inputs.
+  const PLOTLY_ES = {
+    moduleType: 'locale',
+    name: 'es',
+    dictionary: {
+      'Autoscale': 'Autoescalar',
+      'Box Select': 'Selección rectangular',
+      'Lasso Select': 'Selección con lazo',
+      'Compare data on hover': 'Comparar datos al pasar el mouse',
+      'Show closest data on hover': 'Mostrar el dato más cercano al pasar el mouse',
+      'Toggle Spike Lines': 'Mostrar/ocultar líneas guía',
+      'Double-click to zoom back out': 'Doble clic para volver a alejar',
+      'Download plot': 'Descargar gráfico',
+      'Download plot as a png': 'Descargar gráfico como png',
+      'Pan': 'Desplazar',
+      'Reset axes': 'Restablecer ejes',
+      'Reset view': 'Restablecer vista',
+      'Zoom': 'Zoom',
+      'Zoom in': 'Acercar',
+      'Zoom out': 'Alejar',
+    },
+  }
+  let registered = false
+  /** Plotly `config.locale` for a UI language (registers the Spanish dictionary once). */
+  export function plotlyLocale(lang) {
+    if (lang !== 'es') return 'en'
+    if (!registered) { Plotly.register(PLOTLY_ES); registered = true }
+    return 'es'
+  }
+</script>
+
 <script>
   import { onMount, onDestroy, afterUpdate, createEventDispatcher } from 'svelte'
-  import Plotly from 'plotly.js-dist'
-  import { theme, showLegend, plotCursor } from '../stores/app.js'
+  import { theme, showLegend, plotCursor, lang } from '../stores/app.js'
+  import { beginPlotWork } from '../lib/plot-activity.js'
+
+  const EXPORT_TITLE = { en: 'Export as SVG', es: 'Exportar como SVG' }
 
   export let traces    = []
   export let xLabel    = '$f\\ [\\mathrm{Hz}]$'
@@ -30,10 +67,11 @@
   let resizeObserver
   let wasActive = active
   let refreshTimer = null
+  let refreshDone = null   // plot-activity token of the scheduled refresh
   let refreshToken = 0
   let lastTheme = $theme
 
-  $: _plotPrefs = `${$theme}|${$showLegend}|${$plotCursor}|${xLabel}|${yLabel}|${yDtick}|${active}`
+  $: _plotPrefs = `${$theme}|${$showLegend}|${$plotCursor}|${xLabel}|${yLabel}|${yDtick}|${active}|${$lang}`
   $: void _plotPrefs
 
   function plotColors() {
@@ -104,7 +142,8 @@
     }
   }
 
-  const CONFIG = {
+  $: CONFIG = {
+    locale:        plotlyLocale($lang),
     responsive:    true,
     displaylogo:   false,
     displayModeBar: !compact,
@@ -174,9 +213,11 @@
   // reads the latest props when it fires.
   function scheduleRefresh(delayMs = 32) {
     if (refreshTimer != null) return
+    const done = refreshDone = beginPlotWork()
     refreshTimer = setTimeout(() => {
       refreshTimer = null
-      refreshPlot()
+      refreshDone = null
+      refreshPlot().finally(done)
     }, delayMs)
   }
 
@@ -245,6 +286,7 @@
     destroyed = true
     initialized = false
     if (refreshTimer != null) clearTimeout(refreshTimer)
+    refreshDone?.()
     if (shapesFrame != null) cancelAnimationFrame(shapesFrame)
     refreshToken++
     resizeObserver?.disconnect()
@@ -263,7 +305,7 @@
   <div bind:this={container} class="plot-div"></div>
   <slot />
   {#if !compact}
-    <button class="export-btn" on:click={exportSVG} title="Export as SVG">
+    <button class="export-btn" on:click={exportSVG} title={EXPORT_TITLE[$lang] ?? EXPORT_TITLE.en}>
       SVG
     </button>
   {/if}

@@ -11,13 +11,28 @@
 
 import { LP, HP, BP, BR, F0_BW, DEFAULT_FORM, buildParams } from '../params.js'
 import { computeStep, zpkGainFromBa, responseDuration } from '../time-response.js'
+import { bodeFromZpk, designGain } from '../zpk-bode.js'
 import { makeTheoryQuestion } from './theory.js'
+import { approxName, typeName } from '../i18n.js'
 
 export const GAME_APPROX = [0, 1, 2, 3, 4]
-export const APPROX_LABELS = ['Butterworth', 'Chebyshev I', 'Chebyshev II', 'Cauer', 'Legendre']
+export const APPROX_LABELS = ['Butterworth', 'Chebyshev I', 'Chebyshev II', 'Cauer', 'Optimum L']
 export const GAME_TYPES = [LP, HP, BP, BR]
 export const TYPE_LABELS = ['Low-pass', 'High-pass', 'Band-pass', 'Band-reject']
 export const TYPE_SHORT = ['LP', 'HP', 'BP', 'BR']
+
+// ── Language ─────────────────────────────────────────────────────────────────
+// Every user-facing string is built when a round is created, in the round's
+// language (settings.lang: 'en' | 'es', English by default). The English
+// strings stay inline below; the Spanish ones (TC2 Guía 3 wording) sit next to
+// them, and each round remembers its language in `round.lang`.
+
+/** 'en' unless Spanish is asked for. */
+const L = lang => (lang === 'es' ? 'es' : 'en')
+/** Approximation name (Legendre → Óptimo L in Spanish). */
+export const approxLabel = (a, lang = 'en') => (L(lang) === 'en' ? APPROX_LABELS[a] : approxName(a, 'es'))
+/** Filter type name ('Low-pass' / 'Pasa-bajos'). */
+export const typeLabel = (ft, lang = 'en') => (L(lang) === 'en' ? TYPE_LABELS[ft] : typeName(ft, 'es'))
 
 export const QUESTION_KINDS = ['approx', 'type', 'order', 'protoOrder', 'ripple', 'stepStart', 'stepEnd']
 /** Kinds that only apply to some filter types (BP / BR). */
@@ -31,7 +46,18 @@ export const VIEWS = [
   { id: 'step',       label: 'Step',       title: 'Step response y(t)',  questions: ['type', 'approx'] },
   { id: 'groupDelay', label: 'Group delay', title: 'Group delay τ(ω)',   questions: ['approx', 'type'] },
 ]
-export const viewById = id => VIEWS.find(v => v.id === id)
+const VIEW_TEXT_ES = {
+  magnitude:  { label: 'Módulo',           title: 'Módulo |H(jω)|' },
+  phase:      { label: 'Fase',             title: 'Fase ∠H(jω)' },
+  poleZero:   { label: 'Polos y ceros',    title: 'Diagrama de polos y ceros' },
+  step:       { label: 'Escalón',          title: 'Respuesta al escalón y(t)' },
+  groupDelay: { label: 'Retardo de grupo', title: 'Retardo de grupo τ(ω)' },
+}
+/** A view with its label / title in `lang` (English: the VIEWS entry itself). */
+const localView = (v, lang) => (v && L(lang) === 'es' ? { ...v, ...VIEW_TEXT_ES[v.id] } : v)
+export const viewById = (id, lang = 'en') => localView(VIEWS.find(v => v.id === id), lang)
+/** VIEWS with labels / titles in `lang` (for the Options chips). */
+export const localViews = (lang = 'en') => VIEWS.map(v => localView(v, lang))
 
 export const ROUND_KINDS = [
   { id: 'choice', label: 'Multiple choice' },
@@ -39,6 +65,13 @@ export const ROUND_KINDS = [
   { id: 'lineup', label: 'Line-up' },
   { id: 'theory', label: 'Theory cards' },
 ]
+const ROUND_KIND_ES = {
+  choice: 'Opción múltiple', match: 'Emparejar gráficos', lineup: 'Curvas superpuestas', theory: 'Tarjetas de teoría',
+}
+/** ROUND_KINDS with labels in `lang`. */
+export const localRoundKinds = (lang = 'en') => (L(lang) === 'es'
+  ? ROUND_KINDS.map(k => ({ ...k, label: ROUND_KIND_ES[k.id] }))
+  : ROUND_KINDS)
 
 /**
  * Bumped when round kinds are added, so saves from before get the new kinds
@@ -68,6 +101,15 @@ export const MATCH_TARGETS = {
 const MATCH_NOUN = {
   magnitude: 'magnitude', phase: 'phase', poleZero: 'pole-zero map',
   step: 'step response', groupDelay: 'group delay',
+}
+/** Card tags, and the given plot as the subject of the explanation. */
+const MATCH_NOUN_ES = {
+  magnitude: 'módulo', phase: 'fase', poleZero: 'polos y ceros',
+  step: 'respuesta al escalón', groupDelay: 'retardo de grupo',
+}
+const MATCH_GIVEN_ES = {
+  magnitude: 'El módulo dado', phase: 'La fase dada', poleZero: 'El diagrama de polos y ceros dado',
+  step: 'La respuesta al escalón dada', groupDelay: 'El retardo de grupo dado',
 }
 
 export const DEFAULT_SETTINGS = {
@@ -235,7 +277,7 @@ export async function buildDesign(api, spec, points = 2000, range = freqRangeHz(
   const r = await api.filterDesign(spec.params)
   if (r.error) throw new Error(r.error)
   const { min, max } = range
-  const bode = await api.computeBode(r.num, r.den, min, max, points)
+  const bode = bodeFromZpk(r.zeros, r.poles, designGain(r), min, max, points)
   const num = trimLeading(r.num), den = trimLeading(r.den)
   const k = zpkGainFromBa(r.num, r.den)
   const tEnd = responseDuration(r.poles)
@@ -260,21 +302,41 @@ const RIPPLE_LABELS = {
   stop: 'Stopband only',
   both: 'Both bands',
 }
+const RIPPLE_LABELS_ES = {
+  none: 'En ninguna (monótona)',
+  pass: 'Solo en la banda de paso',
+  stop: 'Solo en la banda de atenuación',
+  both: 'En ambas bandas',
+}
 
 export const APPROX_FACTS = [
   'Butterworth: maximally flat, monotonic |H|. All-pole, with the poles on a circle.',
   'Chebyshev I: equiripple passband, monotonic stopband. All-pole, with the poles on an ellipse (closer to the jω axis than Butterworth).',
   'Chebyshev II (inverse Chebyshev): flat passband, equiripple stopband. Its zeros on the jω axis put notches in the stopband.',
   'Cauer (elliptic): ripple in both bands plus jω-axis zeros: the sharpest transition for a given order.',
-  'Legendre (optimum-L): monotonic like Butterworth, but with the steepest roll-off a monotonic response can have. All-pole.',
+  'Optimum L (Legendre): monotonic like Butterworth, but with the steepest roll-off a monotonic response can have. All-pole.',
+]
+const APPROX_FACTS_ES = [
+  'Butterworth: |H| máximamente plano y monótono. Solo polos, ubicados sobre una circunferencia.',
+  'Chebyshev I: banda de paso equiripple, banda de atenuación monótona. Solo polos, ubicados sobre una elipse (más cerca del eje jω que en Butterworth).',
+  'Chebyshev II (inversa de Chebyshev): banda de paso plana, banda de atenuación equiripple. Sus ceros sobre el eje jω (ceros de transmisión) generan picos de atenuación en la banda de atenuación.',
+  'Cauer (elíptico): oscilaciones en ambas bandas y ceros de transmisión sobre el eje jω: la transición más abrupta para un orden dado.',
+  'Óptimo L: monótono como Butterworth, pero con la mayor pendiente que puede tener una respuesta monótona. Solo polos.',
 ]
 
 const APPROX_CUE = {
   magnitude: 'Look for ripple in each band, and for notches (zeros) in the stopband.',
   phase: 'jω-axis zeros (Chebyshev II / Cauer) show up as 180° phase jumps. Rippled approximations bend the phase more sharply near the band edge.',
-  poleZero: 'Poles on a circle → Butterworth; on a flatter ellipse → Chebyshev I; zeros on the jω axis → Chebyshev II or Cauer. Legendre poles look Butterworth-like, but pushed closer to the jω axis near the band edge.',
-  step: 'Rippled passbands ring the most: Chebyshev I and Cauer overshoot the most (about 25–30 % at even order) and ring the longest. Butterworth, Legendre (a bit more than Butterworth) and Chebyshev II are milder, around 5–17 % depending on the order.',
-  groupDelay: 'The delay peaks at the band edge, and the sharper the approximation, the taller the peak: Cauer ≫ Chebyshev I > Legendre ≳ Chebyshev II ≈ Butterworth.',
+  poleZero: 'Poles on a circle → Butterworth; on a flatter ellipse → Chebyshev I; zeros on the jω axis → Chebyshev II or Cauer. Optimum L poles look Butterworth-like, but pushed closer to the jω axis near the band edge.',
+  step: 'Rippled passbands ring the most: Chebyshev I and Cauer overshoot the most (about 25–30 % at even order) and ring the longest. Butterworth, Optimum L (a bit more than Butterworth) and Chebyshev II are milder, around 5–17 % depending on the order.',
+  groupDelay: 'The delay peaks at the band edge, and the sharper the approximation, the taller the peak: Cauer ≫ Chebyshev I > Optimum L ≳ Chebyshev II ≈ Butterworth.',
+}
+const APPROX_CUE_ES = {
+  magnitude: 'Hay que buscar oscilaciones en cada banda, y picos de atenuación (ceros de transmisión) en la banda de atenuación.',
+  phase: 'Los ceros sobre el eje jω (Chebyshev II / Cauer) aparecen como saltos de 180° en la fase. Las aproximaciones con oscilaciones curvan la fase más bruscamente cerca del borde de banda.',
+  poleZero: 'Polos sobre una circunferencia → Butterworth; sobre una elipse achatada → Chebyshev I; ceros sobre el eje jω → Chebyshev II o Cauer. Los polos de Óptimo L se parecen a los de Butterworth, pero se acercan más al eje jω cerca del borde de banda.',
+  step: 'Las bandas de paso con oscilaciones son las que más oscilan en el escalón: Chebyshev I y Cauer tienen el mayor sobrepico (cerca de 25–30 % en orden par) y son las que más tardan en establecerse. Butterworth, Óptimo L (algo más que Butterworth) y Chebyshev II son más suaves, entre 5 y 17 % según el orden.',
+  groupDelay: 'El retardo tiene un pico en el borde de banda, y cuanto más selectiva es la aproximación, más alto es el pico: Cauer ≫ Chebyshev I > Óptimo L ≳ Chebyshev II ≈ Butterworth.',
 }
 
 export const TYPE_FACTS = [
@@ -283,6 +345,12 @@ export const TYPE_FACTS = [
   'Band-pass: passes around ω0 and rejects both ends.',
   'Band-reject: rejects around ω0 and passes both ends.',
 ]
+const TYPE_FACTS_ES = [
+  'Pasa-bajos: deja pasar ω → 0 y atenúa ω → ∞.',
+  'Pasa-altos: atenúa ω → 0 y deja pasar ω → ∞.',
+  'Pasa-banda: deja pasar alrededor de ω0 y atenúa ambos extremos.',
+  'Rechaza-banda: atenúa alrededor de ω0 y deja pasar ambos extremos.',
+]
 
 const TYPE_CUE = {
   magnitude: 'Check where |H| is high: at DC, at high frequency, in the middle, or everywhere except the middle.',
@@ -290,6 +358,13 @@ const TYPE_CUE = {
   poleZero: 'LP: zeros at ∞ (or on the jω axis above the passband). HP: zeros at the origin (or on jω below the passband). BP: zeros at the origin and at ∞. BR: zeros on the jω axis at ±jω0.',
   step: 'y(0⁺) = H(∞) and y(∞) = H(0). LP rises from 0 to H(0). HP jumps to H(∞) and decays to 0. BP starts and ends at 0 (a ringing burst). BR starts at H(∞), dips, and settles back at H(0).',
   groupDelay: 'The delay peaks where the response transitions: at one edge for LP/HP (LP is flat at DC, HP flat at high ω), at two edges for BP/BR.',
+}
+const TYPE_CUE_ES = {
+  magnitude: 'Hay que ver dónde |H| es alto: en ω = 0, en alta frecuencia, en el medio, o en todas partes salvo el medio.',
+  phase: 'La fase de un LP de solo polos cae de 0° a −n·90°. Un HP arranca positiva y llega a 0°. Un BP barre de + a −, cruzando 0° en ω0. Un BR vuelve a la misma fase en ambos extremos.',
+  poleZero: 'LP: ceros en ∞ (o sobre el eje jω por encima de la banda de paso). HP: ceros en el origen (o sobre jω por debajo de la banda de paso). BP: ceros en el origen y en ∞. BR: ceros sobre el eje jω en ±jω0.',
+  step: 'y(0⁺) = H(∞), y(∞) = H(0). Un LP sube de 0 a H(0). Un HP salta a H(∞) y decae a 0. Un BP empieza y termina en 0 (una ráfaga oscilante). Un BR empieza en H(∞), cae y vuelve a establecerse en H(0).',
+  groupDelay: 'El retardo tiene picos donde la respuesta hace la transición: en un borde para LP/HP (el LP es plano en ω = 0, el HP en alta frecuencia), en dos bordes para BP/BR.',
 }
 
 const plural = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`
@@ -301,7 +376,8 @@ const plural = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`
  * end), BP passband peaks = n, BR extrema per passband = n; stopband notches =
  * ⌊n/2⌋ for LP/HP (per side for BP) and n for BR.
  */
-function readOrder(spec, viewId) {
+function readOrder(spec, viewId, lang = 'en') {
+  if (L(lang) === 'es') return readOrderEs(spec, viewId)
   const { n, ft, approx } = spec
   const band = isBandType(ft)
   const allPole = approx === 0 || approx === 1 || approx === 4
@@ -355,6 +431,62 @@ function readOrder(spec, viewId) {
   return cues.join('; ')
 }
 
+/** readOrder in Spanish: same cues, same cases (keep the two in step). */
+function readOrderEs(spec, viewId) {
+  const { n, ft, approx } = spec
+  const band = isBandType(ft)
+  const allPole = approx === 0 || approx === 1 || approx === 4
+  const passRipple = approx === 1 || approx === 3
+  const stopZeros = approx === 2 || approx === 3
+  const half = Math.floor(n / 2)
+  const notches = k => plural(k, 'pico de atenuación', 'picos de atenuación')
+  const cues = []
+
+  if (viewId === 'poleZero') {
+    cues.push(`contando las ×, hay ${plural(band ? 2 * n : n, 'polo')}${band ? ', dos por cada polo del LP normalizado' : ''}`)
+  } else if (viewId === 'phase') {
+    if (allPole) {
+      if (ft === LP) cues.push(`la fase cae de 0° a −n·90° = −${n * 90}°`)
+      if (ft === HP) cues.push(`la fase cae de +n·90° = +${n * 90}° a 0°`)
+      if (ft === BP) cues.push(`la fase barre de +n·90° a −n·90° (±${n * 90}°), cruzando 0° en ω0`)
+      if (ft === BR) cues.push(`la fase llega a ∓n·90° (${n * 90}°) a cada lado de ω0 y salta n·180° en ω0, donde hay n pares de ceros sobre ±jω0`)
+    } else {
+      const jumps = ft === BR ? n : ft === BP ? 2 * half : half
+      cues.push(`cada par de ceros sobre el eje jω produce un salto de 180°: ${plural(jumps, 'salto')}`)
+      if (ft === BR) cues.push('tantos como el orden del LP normalizado')
+      else if (ft === BP) cues.push(`${plural(half, 'salto')} de cada lado, uno por cada par de ceros del LP normalizado`)
+      else cues.push(`uno por cada par de ceros del LP normalizado${n % 2 ? `, y el polo extra del orden impar deja un neto de ${ft === LP ? '−' : '+'}90° en el extremo de ${ft === LP ? 'alta' : 'baja'} frecuencia` : ''}`)
+    }
+  } else {
+    // magnitude
+    if (passRipple) {
+      if (ft === LP || ft === HP) cues.push(`la banda de paso muestra n = ${n} puntos de derivada nula, contando el extremo plano en ${ft === LP ? 'ω = 0' : 'ω → ∞'}`)
+      if (ft === BP) cues.push(`la banda de paso muestra n = ${plural(n, 'máximo')}`)
+      if (ft === BR) cues.push(`cada banda de paso muestra n = ${n} puntos de derivada nula, contando su extremo plano`)
+    }
+    if (stopZeros) {
+      if (ft === LP || ft === HP) {
+        cues.push(`la banda de atenuación tiene ${notches(half)}, cada uno un par de ceros de transmisión sobre el eje jω`)
+        cues.push(n % 2
+          ? `pasado el último pico de atenuación |H| sigue ${ft === LP ? 'cayendo' : 'subiendo'} con pendiente de 20 dB/déc (el polo extra del orden impar), así que n = 2·${half} + 1`
+          : `pasado el último pico de atenuación |H| se mantiene en −Aa (tantos ceros como polos: orden par), así que n = 2·${half}`)
+      }
+      if (ft === BP) cues.push(n % 2
+        ? `cada banda de atenuación tiene ${notches(half)} y más allá los flancos siguen cayendo con pendiente de 20 dB/déc (orden impar), así que n = 2·${half} + 1`
+        : `cada banda de atenuación tiene ${notches(half)} y luego se mantiene en −Aa (orden par), así que n = 2·${half}`)
+      if (ft === BR) cues.push(`la banda de atenuación tiene n = ${notches(n)}`)
+    }
+    if (allPole && ft !== BR) {
+      const where = ft === BP ? 'cada flanco cae' : ft === LP ? 'muy por encima del borde |H| cae' : 'muy por debajo del borde |H| cae (hacia ω = 0)'
+      cues.push(`${where} con pendiente de 20·n dB/déc = ${20 * n} dB/déc`)
+    }
+    if (allPole && !passRipple && ft === BR) {
+      cues.push('no hay oscilaciones ni picos de atenuación para contar: un orden mayor solo ensancha el rechazo y hace más empinados sus flancos')
+    }
+  }
+  return cues.join('; ')
+}
+
 // ── Questions ────────────────────────────────────────────────────────────────
 
 const fmtVal = v => (v === 0 ? '0' : v === 1 ? '1' : v >= 0.1 ? v.toFixed(3) : v.toPrecision(3))
@@ -397,7 +529,8 @@ function stepApproxAnswerable(spec, design, pools) {
   return [design.h0, design.hInf].some(v => ['ap', 'aa'].includes(levelOf(spec, v)))
 }
 
-function levelReason(which, answer, spec) {
+function levelReason(which, answer, spec, lang = 'en') {
+  if (L(lang) === 'es') return levelReasonEs(which, answer, spec)
   const at = which === 'inf' ? 'ω → ∞' : 'ω → 0'
   const band = which === 'inf' ? 'right' : 'left'
   switch (answer) {
@@ -408,6 +541,20 @@ function levelReason(which, answer, spec) {
     case 'ap': return `The filter passes ${at}, and an even-order Chebyshev I / Cauer sits at the bottom of the passband ripple there: 10^(−Ap/20) = ${fmtVal(10 ** (-spec.apDb / 20))}.`
     case 'aa': return `The filter rejects ${at}, but an even-order Chebyshev II / Cauer has as many finite zeros as poles, so |H| levels off at the stopband ripple: 10^(−Aa/20) = ${fmtVal(10 ** (-spec.aaDb / 20))}.`
     default: return `Here the limit is ${answer}.`
+  }
+}
+
+function levelReasonEs(which, answer, spec) {
+  const at = which === 'inf' ? 'ω → ∞' : 'ω → 0'
+  const band = which === 'inf' ? 'derecho' : 'izquierdo'
+  switch (answer) {
+    case 'zero': return which === 'inf'
+      ? 'H(s) tiene más polos que ceros, así que |H| → 0 cuando ω → ∞.'
+      : 'H(s) tiene ceros en el origen (HP / BP), así que H(0) = 0.'
+    case 'one': return `El filtro deja pasar ${at}, donde |H| vale el máximo de la banda de paso (ganancia 1). Se lee en el borde ${band} del gráfico de módulo.`
+    case 'ap': return `El filtro deja pasar ${at}, y ahí un Chebyshev I / Cauer de orden par queda en el mínimo de las oscilaciones de la banda de paso: 10^(−Ap/20) = ${fmtVal(10 ** (-spec.apDb / 20))}.`
+    case 'aa': return `El filtro atenúa ${at}, pero un Chebyshev II / Cauer de orden par tiene tantos ceros finitos como polos, así que |H| se mantiene en el nivel de las oscilaciones de la banda de atenuación: 10^(−Aa/20) = ${fmtVal(10 ** (-spec.aaDb / 20))}.`
+    default: return `Aquí el límite es ${answer}.`
   }
 }
 
@@ -439,7 +586,8 @@ function trivialKind(kind, pools) {
   return false
 }
 
-export function makeQuestion(kind, viewId, spec, design, rng = Math.random, pools = answerPools()) {
+export function makeQuestion(kind, viewId, spec, design, rng = Math.random, pools = answerPools(), lang = 'en') {
+  if (L(lang) === 'es') return makeQuestionEs(kind, viewId, spec, design, rng, pools)
   switch (kind) {
     case 'approx': if (viewId === 'step') {
       const lv = v => `${fmtVal(v)}${['ap', 'aa'].includes(levelOf(spec, v)) ? ` (−${levelOf(spec, v) === 'ap' ? spec.apDb : spec.aaDb} dB)` : ''}`
@@ -512,12 +660,95 @@ export function makeQuestion(kind, viewId, spec, design, rng = Math.random, pool
   }
 }
 
+/** makeQuestion in Spanish: same options, answers and rng use, Spanish text. */
+function makeQuestionEs(kind, viewId, spec, design, rng, pools) {
+  const name = a => approxLabel(a, 'es')
+  const how = 'Cómo verlo en este gráfico'
+  switch (kind) {
+    case 'approx': if (viewId === 'step') {
+      const lv = v => `${fmtVal(v)}${['ap', 'aa'].includes(levelOf(spec, v)) ? ` (−${levelOf(spec, v) === 'ap' ? spec.apDb : spec.aaDb} dB)` : ''}`
+      return {
+        kind, prompt: '¿Qué aproximación es?',
+        options: [0, spec.approx].map(a => ({ id: String(a), label: name(a) })),
+        answer: String(spec.approx),
+        explain: `Aquí y(0⁺) = H(∞) = ${lv(design.hInf)}, y(∞) = H(0) = ${lv(design.h0)}: uno de los dos queda en un nivel de las oscilaciones, algo que solo ocurre en un ${spec.approx === 2 ? 'Chebyshev II / Cauer' : spec.approx === 1 ? 'Chebyshev I / Cauer' : 'Chebyshev / Cauer'} de orden par. En Butterworth |H| es monótono, así que su respuesta al escalón siempre empieza y termina exactamente en 0 o en 1.`,
+      }
+    } else return {
+      kind, prompt: '¿Qué aproximación es?',
+      options: pools.approxes.map(a => ({ id: String(a), label: name(a) })),
+      answer: String(spec.approx),
+      explain: `${APPROX_FACTS_ES[spec.approx]} ${APPROX_CUE_ES[viewId] ?? ''}`.trim(),
+    }
+    case 'type': return {
+      kind, prompt: '¿Qué tipo de filtro es?',
+      options: pools.types.map(t => ({ id: String(t), label: `${TYPE_SHORT[t]} · ${typeLabel(t, 'es')}` })),
+      answer: String(spec.ft),
+      explain: `${TYPE_FACTS_ES[spec.ft]} ${TYPE_CUE_ES[viewId] ?? ''}`.trim(),
+    }
+    case 'order': {
+      const p = design.poles.length
+      const band = spec.ft === BP || spec.ft === BR
+      return {
+        kind, prompt: '¿De qué orden es H(s)?',
+        options: orderOptions(p, rng),
+        answer: String(p),
+        explain: `H(s) tiene ${plural(p, 'polo')}${band ? ` (un LP normalizado de orden ${spec.n}, duplicado por la transformación LPn → ${TYPE_SHORT[spec.ft]})` : ''}. ${how}: ${readOrder(spec, viewId, 'es')}.`,
+      }
+    }
+    case 'protoOrder': {
+      const p = design.poles.length
+      const map = spec.ft === BP ? 's → (s² + ω0²) / (B·s)' : 's → B·s / (s² + ω0²)'
+      return {
+        kind, prompt: '¿De qué orden es el LP normalizado del que proviene?',
+        options: orderOptions(spec.n, rng),
+        answer: String(spec.n),
+        explain: `La transformación LPn → ${TYPE_SHORT[spec.ft]} ${map} convierte cada polo del LP normalizado en un par, así que los ${p} polos de H(s) provienen de un LP de orden ${spec.n}. ${how}: ${readOrder(spec, viewId, 'es')}.`,
+      }
+    }
+    case 'ripple': {
+      const ans = RIPPLE_OF[spec.approx]
+      return {
+        kind, prompt: '¿Dónde presenta oscilaciones |H|?',
+        options: pools.ripples.map(id => ({ id, label: RIPPLE_LABELS_ES[id] })),
+        answer: ans,
+        explain: `${name(spec.approx)}: ${RIPPLE_LABELS_ES[ans].toLowerCase()}. ${viewId === 'poleZero'
+          ? 'En el diagrama: los ceros sobre el eje jω indican una banda de atenuación equiripple, y los polos sobre una elipse achatada, oscilaciones en la banda de paso.'
+          : 'Las bandas equiripple oscilan entre dos niveles; las monótonas nunca cambian de sentido.'}`,
+      }
+    }
+    case 'stepStart': {
+      const { options, answer } = levelOptions(spec, design.hInf)
+      return {
+        kind, prompt: '¿Cuál es el valor inicial de la respuesta al escalón, y(0⁺)?',
+        options, answer,
+        explain: `Teorema del valor inicial: y(0⁺) = lim s→∞ s·H(s)·(1/s) = H(∞). ${levelReason('inf', answer, spec, 'es')}`,
+      }
+    }
+    case 'stepEnd': {
+      const { options, answer } = levelOptions(spec, design.h0)
+      return {
+        kind, prompt: '¿Cuál es el valor final de la respuesta al escalón, y(∞)?',
+        options, answer,
+        explain: `Teorema del valor final: y(∞) = lim s→0 s·H(s)·(1/s) = H(0). ${levelReason('zero', answer, spec, 'es')}`,
+      }
+    }
+    default: throw new Error(`Unknown question kind ${kind}`)
+  }
+}
+
 const MATCH_CUE = {
   magnitude: 'Reading |H|: poles close to the jω axis make passband ripple peaks, jω-axis zeros make notches, and H(0) / H(∞) set where the curve starts and ends.',
   phase: 'Reading the phase: each pole adds −90° and each zero +90° as ω sweeps past it, jω-axis zeros cause 180° jumps (where |H| has notches), and poles close to the axis make the phase bend sharply.',
   poleZero: 'Reading the map: every notch in |H| is a zero on the jω axis, ripple comes from poles close to the jω axis, and the order is the number of ×.',
   step: 'Reading the step: y(0⁺) = H(∞) and y(∞) = H(0), and the closer the poles are to the jω axis (the more ripple in |H|), the more it overshoots and rings.',
   groupDelay: 'Reading the group delay: it peaks at the band edges, and the closer the poles are to the jω axis (the sharper the approximation), the taller the peak.',
+}
+const MATCH_CUE_ES = {
+  magnitude: 'Lectura de |H|: los polos cerca del eje jω generan los máximos de las oscilaciones en la banda de paso, los ceros sobre el eje jω generan picos de atenuación, y H(0) / H(∞) fijan dónde empieza y termina la curva.',
+  phase: 'Lectura de la fase: cada polo aporta −90° y cada cero +90° a medida que ω pasa por él, los ceros sobre el eje jω causan saltos de 180° (donde |H| tiene picos de atenuación), y los polos cerca del eje hacen que la fase se curve bruscamente.',
+  poleZero: 'Lectura del diagrama: cada pico de atenuación de |H| es un cero sobre el eje jω, las oscilaciones vienen de polos cerca del eje jω, y el orden es la cantidad de ×.',
+  step: 'Lectura del escalón: y(0⁺) = H(∞), y(∞) = H(0), y cuanto más cerca del eje jω están los polos (más oscilaciones en |H|), mayor es el sobrepico y más tarda en establecerse.',
+  groupDelay: 'Lectura del retardo de grupo: tiene picos en los bordes de banda, y cuanto más cerca del eje jω están los polos (más selectiva la aproximación), más alto es el pico.',
 }
 
 /** Given view → the card views allowed by the settings (null when no match round fits). */
@@ -535,6 +766,7 @@ function matchPlan(settings) {
 }
 
 async function createChoiceRound(api, settings, rng, id) {
+  const lang = L(settings.lang)
   const pools = answerPools(settings)
   const stepApprox = pools.approxes.filter(a => STEP_APPROX.includes(a))
   const useful = v => (v.id !== 'step' || stepApprox.length > 0)
@@ -566,8 +798,8 @@ async function createChoiceRound(api, settings, rng, id) {
       try { design = await buildDesign(api, spec) } catch (e) { lastErr = e; continue }
       if (view.id === 'step' && !design.step) continue
     }
-    const questions = kinds.map(k => makeQuestion(k, view.id, spec, design, rng, pools))
-    return { id, kind: 'choice', spec, view, design, questions }
+    const questions = kinds.map(k => makeQuestion(k, view.id, spec, design, rng, pools, lang))
+    return { id, kind: 'choice', lang, spec, view: localView(view, lang), design, questions }
   }
   throw lastErr ?? new Error('Could not build a round')
 }
@@ -580,6 +812,7 @@ async function createChoiceRound(api, settings, rng, id) {
  * the right filter type, and no Legendre appears when a step response is shown.
  */
 async function createMatchRound(api, settings, rng, id, plan) {
+  const lang = L(settings.lang), es = lang === 'es'
   let lastErr = null
   for (let attempt = 0; attempt < 8; attempt++) {
     const givenId = pick(Object.keys(plan), rng)
@@ -613,19 +846,25 @@ async function createMatchRound(api, settings, rng, id, plan) {
     const order = shuffle(cards, rng)
     const options = order.map((c, slot) => ({
       id: String(slot),
-      tag: MATCH_NOUN[c.view],
-      label: `${describeSpec(c.spec, c.design)}${c.correct ? ' (same filter)' : ''}`,
-      round: { id: `${id}:${slot}`, spec: c.spec, view: viewById(c.view), design: c.design },
+      tag: (es ? MATCH_NOUN_ES : MATCH_NOUN)[c.view],
+      label: `${describeSpec(c.spec, c.design, lang)}${c.correct ? (es ? ' (mismo filtro)' : ' (same filter)') : ''}`,
+      round: { id: `${id}:${slot}`, lang, spec: c.spec, view: viewById(c.view, lang), design: c.design },
     }))
     const answer = options.filter((_, slot) => order[slot].correct).map(o => o.id)
     const shownViews = [...new Set(order.map(c => c.view))]
-    const question = {
+    const shownIdx = answer.map(a => Number(a) + 1).join(', ')
+    const question = es ? {
+      kind: 'match', type: 'match', multi: true,
+      prompt: '¿Qué gráficos corresponden al mismo filtro?',
+      options, answer,
+      explain: `${MATCH_GIVEN_ES[givenId]} corresponde a un ${describeSpec(spec, designs[0], lang)}: ${answer.length === 1 ? 'lo muestra 1 gráfico' : `lo muestran ${answer.length} gráficos`} (${shownIdx}). ${shownViews.map(v => MATCH_CUE_ES[v]).join(' ')}`,
+    } : {
       kind: 'match', type: 'match', multi: true,
       prompt: 'Which plots belong to the same filter?',
       options, answer,
-      explain: `The given ${MATCH_NOUN[givenId]} is a ${describeSpec(spec, designs[0])}: ${plural(answer.length, 'card')} ${answer.length === 1 ? 'shows' : 'show'} it (${answer.map(a => Number(a) + 1).join(', ')}). ${shownViews.map(v => MATCH_CUE[v]).join(' ')}`,
+      explain: `The given ${MATCH_NOUN[givenId]} is a ${describeSpec(spec, designs[0])}: ${plural(answer.length, 'card')} ${answer.length === 1 ? 'shows' : 'show'} it (${shownIdx}). ${shownViews.map(v => MATCH_CUE[v]).join(' ')}`,
     }
-    return { id, kind: 'match', spec, view: viewById(givenId), design: designs[0], questions: [question] }
+    return { id, kind: 'match', lang, spec, view: viewById(givenId, lang), design: designs[0], questions: [question] }
   }
   throw lastErr ?? new Error('Could not build a round')
 }
@@ -668,6 +907,29 @@ const LINEUP_CUE = {
     'no finite zeros; poles near Butterworth\'s but crowding the jω axis at the edge',
   ],
 }
+const LINEUP_CUE_ES = {
+  magnitude: [
+    'monótona y con el borde más suave: requiere el mayor orden',
+    'oscilaciones en la banda de paso, banda de atenuación monótona',
+    'banda de paso plana, picos de atenuación en la banda de atenuación',
+    'oscilaciones en ambas bandas y el borde más abrupto: el menor orden',
+    'monótona como Butterworth pero más abrupta, con una leve caída antes del borde',
+  ],
+  phase: [
+    'suave, sin saltos, y con la mayor fase total (el mayor orden)',
+    'sin saltos, y la curvatura más brusca en el borde de banda entre las de solo polos',
+    'saltos de 180° en sus picos de atenuación, con una curvatura suave en el borde',
+    'saltos de 180° y la curvatura más brusca en el borde',
+    'sin saltos, con una curvatura intermedia entre Butterworth y Chebyshev I',
+  ],
+  poleZero: [
+    'polos sobre una circunferencia, sin ceros finitos',
+    'polos sobre una elipse achatada cerca del eje jω, sin ceros finitos',
+    'ceros sobre el eje jω, polos bien alejados de él',
+    'ceros sobre el eje jω y polos muy pegados a él cerca del borde de banda',
+    'sin ceros finitos; polos cerca de los de Butterworth pero apiñados junto al eje jω en el borde',
+  ],
+}
 
 function lineupPossible(settings) {
   const approxes = (settings.approxes?.length ? settings.approxes : GAME_APPROX)
@@ -694,6 +956,7 @@ async function lineupDesigns(api, ft, approxes, shape) {
 }
 
 async function createLineupRound(api, settings, rng, id) {
+  const lang = L(settings.lang), es = lang === 'es'
   const enabled = settings.approxes?.length ? settings.approxes : GAME_APPROX
   const views = LINEUP_VIEWS.filter(v => settings.views.includes(v))
   const types = settings.types?.length ? settings.types : GAME_TYPES
@@ -706,18 +969,25 @@ async function createLineupRound(api, settings, rng, id) {
     let members
     try { members = await lineupDesigns(api, ft, approxes, randomShape(rng)) } catch (e) { lastErr = e; continue }
     if (!members) continue
-    const view = viewById(pick(views, rng))
+    const view = viewById(pick(views, rng), lang)
     const lineup = members.map((m, i) => ({ ...LINEUP_SLOTS[i], ...m }))
     const listed = [...approxes].sort((a, b) => a - b)
-    const questions = lineup.map(m => ({
+    const questions = lineup.map(m => (es ? {
+      kind: 'lineup',
+      prompt: `¿Qué aproximación es la curva ${m.slot}?`,
+      swatch: m.color,
+      options: listed.map(a => ({ id: String(a), label: approxLabel(a, lang) })),
+      answer: String(m.spec.approx),
+      explain: `${m.slot} es el ${describeSpec(m.spec, m.design, lang)}: ${LINEUP_CUE_ES[view.id][m.spec.approx]}. Misma plantilla y cada aproximación en su orden mínimo, así que los órdenes quedan Cauer ≤ Chebyshev I = Chebyshev II ≤ Óptimo L ≤ Butterworth (puede haber empates).`,
+    } : {
       kind: 'lineup',
       prompt: `Which approximation is curve ${m.slot}?`,
       swatch: m.color,
       options: listed.map(a => ({ id: String(a), label: APPROX_LABELS[a] })),
       answer: String(m.spec.approx),
-      explain: `${m.slot} is the ${describeSpec(m.spec, m.design)}: ${LINEUP_CUE[view.id][m.spec.approx]}. Same template, each at its minimum order, so the orders rank Cauer ≤ Chebyshev I = Chebyshev II ≤ Legendre ≤ Butterworth (ties possible).`,
+      explain: `${m.slot} is the ${describeSpec(m.spec, m.design)}: ${LINEUP_CUE[view.id][m.spec.approx]}. Same template, each at its minimum order, so the orders rank Cauer ≤ Chebyshev I = Chebyshev II ≤ Optimum L ≤ Butterworth (ties possible).`,
     }))
-    return { id, kind: 'lineup', spec: lineup[0].spec, view, design: lineup[0].design, lineup, questions }
+    return { id, kind: 'lineup', lang, spec: lineup[0].spec, view, design: lineup[0].design, lineup, questions }
   }
   throw lastErr ?? new Error('Could not build a line-up')
 }
@@ -725,12 +995,14 @@ async function createLineupRound(api, settings, rng, id) {
 // ── Theory cards ────────────────────────────────────────────────────────────
 
 const CARD_VIEW = { id: 'card', label: 'Theory card', title: 'Theory card' }
+const CARD_VIEW_ES = { id: 'card', label: 'Tarjeta de teoría', title: 'Tarjeta de teoría' }
 
 function createTheoryRound(settings, rng, id) {
+  const lang = L(settings.lang)
   const enabled = settings.approxes?.length ? settings.approxes : GAME_APPROX
-  const q = makeTheoryQuestion(enabled, rng)
+  const q = makeTheoryQuestion(enabled, rng, lang)
   if (!q) return null
-  return { id, kind: 'theory', spec: null, view: CARD_VIEW, design: null, card: q.card, questions: [q] }
+  return { id, kind: 'theory', lang, spec: null, view: lang === 'es' ? CARD_VIEW_ES : CARD_VIEW, design: null, card: q.card, questions: [q] }
 }
 
 /** Is `picked` (an option id, or an id array for multi-select) right? */
@@ -767,16 +1039,19 @@ export async function createRound(api, settings = DEFAULT_SETTINGS, rng = Math.r
   return createChoiceRound(api, settings, rng, id)
 }
 
-/** One-line reveal of what the round was (null for a theory card). */
-export function describeRound(round) {
+/** One-line reveal of what the round was (null for a theory card), in the round's language. */
+export function describeRound(round, lang = round?.lang) {
   if (round.kind === 'theory') return null
-  if (round.kind === 'lineup') return round.lineup.map(m => `${m.slot}: ${describeSpec(m.spec, m.design)}`).join(' · ')
-  return `It was a ${describeSpec(round.spec, round.design)}.`
+  if (round.kind === 'lineup') return round.lineup.map(m => `${m.slot}: ${describeSpec(m.spec, m.design, lang)}`).join(' · ')
+  return L(lang) === 'es'
+    ? `Era un ${describeSpec(round.spec, round.design, lang)}.`
+    : `It was a ${describeSpec(round.spec, round.design)}.`
 }
 
-/** One-line reveal of what the round was. */
-export function describeSpec(spec, design) {
+/** One filter in words: '4th-order Cauer low-pass' / 'pasa-bajos Cauer de orden 4'. */
+export function describeSpec(spec, design, lang = 'en') {
   const p = design?.poles?.length ?? spec.n
+  if (L(lang) === 'es') return `${typeLabel(spec.ft, 'es').toLowerCase()} ${approxLabel(spec.approx, 'es')} de orden ${p}`
   return `${ordinal(p)}-order ${APPROX_LABELS[spec.approx]} ${TYPE_LABELS[spec.ft].toLowerCase()}`
 }
 
@@ -785,8 +1060,13 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0])
 }
 
-/** Spec line shown with the plot (never gives the answers away). */
-export function givenLine(spec, round = null) {
+/** Spec line shown with the plot (never gives the answers away), in the round's language. */
+export function givenLine(spec, round = null, lang = round?.lang) {
+  if (L(lang) === 'es') {
+    if (round?.kind === 'theory') return 'Sin gráfico: a partir de lo que se sabe de cada aproximación.'
+    if (round?.kind === 'lineup') return `Una plantilla, ${round.lineup.length} aproximaciones, cada una en su orden mínimo · Ap = ${spec.apDb} dB · Aa = ${spec.aaDb} dB`
+    return `Ap = ${spec.apDb} dB · Aa = ${spec.aaDb} dB · bordes de banda normalizados en torno a 1 rad/s`
+  }
   if (round?.kind === 'theory') return 'No plot: from what you know about each approximation.'
   if (round?.kind === 'lineup') return `One template, ${round.lineup.length} approximations, each at its minimum order · Ap = ${spec.apDb} dB · Aa = ${spec.aaDb} dB`
   return `Ap = ${spec.apDb} dB · Aa = ${spec.aaDb} dB · band edges normalized around 1 rad/s`

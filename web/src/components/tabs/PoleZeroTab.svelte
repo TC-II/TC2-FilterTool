@@ -1,14 +1,49 @@
 <script>
-  import { filterResult, filterParams, stages, remainingPZ, comparisons, theme, colorMode, colorShuffle, activeTab, plotUnit, dataUnit, hoveredStageId } from '../../stores/app.js'
+  import { filterResult, filterParams, stages, remainingPZ, comparisons, theme, colorMode, colorShuffle, activeTab, plotUnit, dataUnit, hoveredStageId, lang } from '../../stores/app.js'
+  import { table, fmt, approxName } from '../../lib/i18n.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
-  import { APPROX_NAMES, plotColor, sPlaneAxis } from '../../lib/approx.js'
+  import { plotColor, sPlaneAxis } from '../../lib/approx.js'
   import { isComplexRoot, rootValue } from '../../lib/roots.js'
   import {
-    makeStage, buildStage, rootsModified, rootRef, parseRootRef, dragStageRoot, wheelStageQ, autoStage,
-    stagePreview, beginStagePreview, endStagePreview,
+    makeStage, buildStage, rootsModified, rootRef, autoStage, stagePreview, stageName,
   } from '../../lib/stages.js'
   import { colorOf, nextColorIndex } from '../../lib/stage-colors.js'
+  import { normOptions } from '../../lib/stage-math.js'
   import PzMap from '../PzMap.svelte'
+
+  const TX = {
+    en: {
+      poles: 'Poles', zeros: 'Zeros',
+      hover: '{noun} (hover)', selected: 'Selected {lower}', selectedHover: 'Selected {lower} (hover)',
+      ofPoles: '{name} poles', ofZeros: '{name} zeros',
+      ofPolesDesigned: '{name} poles (designed)', ofZerosDesigned: '{name} zeros (designed)',
+      selOne: 'Select at least one pole.',
+      selTwo: 'A stage takes one or two poles ({n} selected).',
+      selImproper: 'More zeros ({z}) than poles ({p}): the stage would be improper.',
+      empty: 'Enter a valid template to see its poles and zeros.',
+      allPoles: 'All poles assigned.', allZeros: 'All zeros assigned.',
+      norm: 'Norm.', normNames: {},
+      add: 'Add Stage', adding: 'Adding…',
+      auto: 'Auto-stage remaining', autoTitle: 'Split every unassigned root into 2nd / 1st-order sections, low Q first',
+      stages: 'Stages ({n})',
+    },
+    es: {
+      poles: 'Polos', zeros: 'Ceros',
+      hover: '{noun} (resaltados)', selected: '{noun} seleccionados', selectedHover: '{noun} seleccionados (resaltados)',
+      ofPoles: 'Polos {name}', ofZeros: 'Ceros {name}',
+      ofPolesDesigned: 'Polos {name} (diseñados)', ofZerosDesigned: 'Ceros {name} (diseñados)',
+      selOne: 'Seleccione al menos un polo.',
+      selTwo: 'Una etapa lleva uno o dos polos ({n} seleccionados).',
+      selImproper: 'Más ceros ({z}) que polos ({p}): la etapa sería impropia.',
+      empty: 'Ingrese una plantilla válida para ver sus polos y ceros.',
+      allPoles: 'Todos los polos están asignados.', allZeros: 'Todos los ceros están asignados.',
+      norm: 'Norm.', normNames: { Passband: 'Banda de paso' },
+      add: 'Agregar etapa', adding: 'Agregando…',
+      auto: 'Armar etapas con el resto', autoTitle: 'Separar todas las raíces sin asignar en etapas de 2.º / 1.er orden, de menor a mayor Q',
+      stages: 'Etapas ({n})',
+    },
+  }
+  $: tx = table(TX, $lang)
 
   // Selection / hover state, by root id (lib/roots.js): repeated roots such as
   // the band-pass zeros at s = 0 stay individually selectable.
@@ -47,16 +82,18 @@
   // Mirrors the engine's build_stage() limits.
   $: selectionError = (() => {
     if (selectedIds.size === 0) return ''
-    if (selectedPoles.length === 0) return 'Select at least one pole.'
-    if (selectedPoles.length > 2) return `A stage takes one or two poles (${selectedPoles.length} selected).`
+    if (selectedPoles.length === 0) return tx.selOne
+    if (selectedPoles.length > 2) return fmt(tx.selTwo, { n: selectedPoles.length })
     if (selectedZeros.length > selectedPoles.length)
-      return `More zeros (${selectedZeros.length}) than poles (${selectedPoles.length}): the stage would be improper.`
+      return fmt(tx.selImproper, { z: selectedZeros.length, p: selectedPoles.length })
     return ''
   })()
   $: selectionValid = selectedPoles.length > 0 && !selectionError
 
-  const NORM_OPTIONS = ['Passband', 'ω→0', 'ω→∞', 'ω→ω0']
   let normtype = 'Passband'
+  // Only the normalizations that work for the selected roots
+  $: normOpts = normOptions($filterParams?.filter_type ?? 0, selectedZeros.map(rootValue), selectedPoles.map(rootValue))
+  $: if (normOpts.length && !normOpts.includes(normtype)) normtype = normOpts[0]
   let adding = false
   let addError = ''
 
@@ -91,30 +128,31 @@
   const labelled = (rs, k) => rs.map(r => ({ ...r, label: fmtComplex(r, k) }))
 
   // Refs: 'r:<root id>' for unassigned roots (selectable), 's:<stage id>' for staged ones.
-  function buildGroups(fr, remaining, stageList, selIds, hovId, hovStage, mainCol, compList, k, ghostId = null) {
+  function buildGroups(fr, remaining, stageList, selIds, hovId, hovStage, mainCol, compList, k, t, ghostId = null) {
     if (!fr?.roots) return []
     const out = []
 
     // Comparison filters behind the main filter
     for (const comp of compList ?? []) {
       const cc = plotColor(comp.approxType, $theme, $colorMode, $colorShuffle)
-      const cn = APPROX_NAMES[comp.approxType]
-      out.push({ roots: labelled(asRoots(comp.filterResult.poles), k), symbol: 'x', color: cc, size: 7, name: `${cn} poles` })
-      out.push({ roots: labelled(asRoots(comp.filterResult.zeros), k), symbol: 'circle-open', color: cc, size: 7, name: `${cn} zeros` })
+      const cn = approxName(comp.approxType, $lang)
+      out.push({ roots: labelled(asRoots(comp.filterResult.poles), k), symbol: 'x', color: cc, size: 7, name: fmt(t.ofPoles, { name: cn }) })
+      out.push({ roots: labelled(asRoots(comp.filterResult.zeros), k), symbol: 'circle-open', color: cc, size: 7, name: fmt(t.ofZeros, { name: cn }) })
     }
 
     // Staged roots, in their stage's colour, at their current (possibly moved)
     // position; a faint ghost marks where a moved root was designed.
     stageList.forEach((st, i) => {
-      const col = colorOf(st, i, $theme)
+      const col = colorOf(st, i, $theme, mainCol)
       const dim = (hovStage != null && hovStage !== st.id) || st.id === ghostId
       const big = hovStage === st.id ? 4 : 0
+      const name = stageName(st.name, $lang)
       if (rootsModified(st)) {
-        out.push({ roots: labelled(asRoots(st.orig.poles), k), symbol: 'x', color: col, size: 8, opacity: 0.3, name: `${st.name} poles (designed)`, showlegend: false })
-        out.push({ roots: labelled(asRoots(st.orig.zeros), k), symbol: 'circle-open', color: col, size: 8, opacity: 0.3, name: `${st.name} zeros (designed)`, showlegend: false })
+        out.push({ roots: labelled(asRoots(st.orig.poles), k), symbol: 'x', color: col, size: 8, opacity: 0.3, name: fmt(t.ofPolesDesigned, { name }), showlegend: false })
+        out.push({ roots: labelled(asRoots(st.orig.zeros), k), symbol: 'circle-open', color: col, size: 8, opacity: 0.3, name: fmt(t.ofZerosDesigned, { name }), showlegend: false })
       }
-      out.push({ roots: labelled(asRoots(st.poles), k).map((r, j) => ({ ...r, ref: rootRef(st.id, 'p', j) })), symbol: 'x', color: col, size: 9 + big, opacity: dim ? 0.35 : 1, name: `${st.name} poles` })
-      out.push({ roots: labelled(asRoots(st.zeros), k).map((r, j) => ({ ...r, ref: rootRef(st.id, 'z', j) })), symbol: 'circle-open', color: col, size: 9 + big, opacity: dim ? 0.35 : 1, name: `${st.name} zeros` })
+      out.push({ roots: labelled(asRoots(st.poles), k).map((r, j) => ({ ...r, ref: rootRef(st.id, 'p', j) })), symbol: 'x', color: col, size: 9 + big, opacity: dim ? 0.35 : 1, name: fmt(t.ofPoles, { name }) })
+      out.push({ roots: labelled(asRoots(st.zeros), k).map((r, j) => ({ ...r, ref: rootRef(st.id, 'z', j) })), symbol: 'circle-open', color: col, size: 9 + big, opacity: dim ? 0.35 : 1, name: fmt(t.ofZeros, { name }) })
     })
 
     // Unassigned roots: normal / hover / selected / selected + hover
@@ -128,13 +166,14 @@
       const buckets = [[], [], [], []]   // normal, hover, selected, selected+hover
       for (const r of pts) buckets[(selIds.has(r.id) ? 2 : 0) + (hoverSet.has(r.id) ? 1 : 0)].push({ ...r, ref: `r:${r.id}` })
       const [n, h, sel, sh] = buckets
+      const v = { noun, lower: noun.toLowerCase() }
       if (n.length)   out.push({ roots: labelled(n, k),   symbol, color: mainCol, size: 10, name: `${noun}` })
-      if (h.length)   out.push({ roots: labelled(h, k),   symbol, color: C.hi,    size: 12, name: `${noun} (hover)` })
-      if (sel.length) out.push({ roots: labelled(sel, k), symbol, color: C.hi,    size: 14, name: `Selected ${noun.toLowerCase()}` })
-      if (sh.length)  out.push({ roots: labelled(sh, k),  symbol, color: C.hi,    size: 16, name: `Selected ${noun.toLowerCase()} (hover)` })
+      if (h.length)   out.push({ roots: labelled(h, k),   symbol, color: C.hi,    size: 12, name: fmt(t.hover, v) })
+      if (sel.length) out.push({ roots: labelled(sel, k), symbol, color: C.hi,    size: 14, name: fmt(t.selected, v) })
+      if (sh.length)  out.push({ roots: labelled(sh, k),  symbol, color: C.hi,    size: 16, name: fmt(t.selectedHover, v) })
     }
-    part(remaining.poles ?? [], 'x', 'Poles')
-    part(remaining.zeros ?? [], 'circle-open', 'Zeros')
+    part(remaining.poles ?? [], 'x', t.poles)
+    part(remaining.zeros ?? [], 'circle-open', t.zeros)
     return out
   }
 
@@ -146,18 +185,18 @@
   let groups = []
   let ghostFor = null
   let holdOverlay = false
-  $: if (previewId == null) { ghostFor = null; groups = buildGroups($filterResult, $remainingPZ, $stages, selectedIds, hoveredId, $hoveredStageId, mainColor, $comparisons, axis.scale) }
+  $: if (previewId == null) { ghostFor = null; groups = buildGroups($filterResult, $remainingPZ, $stages, selectedIds, hoveredId, $hoveredStageId, mainColor, $comparisons, axis.scale, tx) }
   $: if (previewId != null && ghostFor !== previewId) {
     ghostFor = previewId
     holdOverlay = true
-    groups = buildGroups($filterResult, $remainingPZ, $stages, selectedIds, hoveredId, null, mainColor, $comparisons, axis.scale, previewId)
+    groups = buildGroups($filterResult, $remainingPZ, $stages, selectedIds, hoveredId, null, mainColor, $comparisons, axis.scale, tx, previewId)
   }
   $: overlayStage = holdOverlay ? $stages.find(st => st.id === (previewId ?? ghostForOverlay)) : null
   let ghostForOverlay = null
   $: if (previewId != null) ghostForOverlay = previewId
   $: overlayMarkers = overlayStage ? liveMarkers(overlayStage) : null
   function liveMarkers(st) {
-    const col = colorOf(st, $stages.indexOf(st), $theme)
+    const col = colorOf(st, $stages.indexOf(st), $theme, mainColor)
     return [
       ...st.poles.map(([re, im]) => ({ re, im, symbol: 'x', color: col, size: 13 })),
       ...st.zeros.map(([re, im]) => ({ re, im, symbol: 'o', color: col, size: 13 })),
@@ -173,17 +212,11 @@
     else { hoveredId = null; hoveredStageId.set(null) }
   }
 
-  const isStageRoot = ref => !!parseRootRef(ref)
-  const isStagePole = ref => parseRootRef(ref)?.kind === 'p'
-  const onMapDragStart = e => { const r = parseRootRef(e.detail.ref); if (r) beginStagePreview(r.stageId) }
-  const onMapDrag  = e => dragStageRoot(e.detail.ref, e.detail.re, e.detail.im, e.detail.snapIm, { preview: true })
-  const onMapDragEnd = () => endStagePreview(true)
-  const onMapWheel = e => { const r = parseRootRef(e.detail.ref); if (r) wheelStageQ(r.stageId, e.detail.dir) }
 
-  // E3: click a root on the plot to (de)select it.
+  // Roots can't be moved here (that's the Stages tab): a click on an unassigned
+  // root (de)selects it, with its conjugate, for the next stage.
   function onMapClick(e) {
     const ref = e.detail.ref
-    if (parseRootRef(ref) && $stagePreview?.phase === 'drag') { endStagePreview(false); return }
     if (!ref?.startsWith('r:')) return
     const id = ref.slice(2)
     const root = [...($remainingPZ.zeros ?? []), ...($remainingPZ.poles ?? [])].find(r => r.id === id)
@@ -201,28 +234,23 @@
       yLabel={axis.yLabel}
       active={$activeTab === 'poleZero'}
       resetKey={$filterResult}
-      canDrag={isStageRoot}
-      canWheel={isStagePole}
       on:hover={onMapHover}
       {overlayMarkers}
+      canClick={ref => ref?.startsWith('r:')}
       on:click={onMapClick}
-      on:dragstart={onMapDragStart}
-      on:drag={onMapDrag}
-      on:dragend={onMapDragEnd}
       on:rendered={onMapRendered}
-      on:wheel={onMapWheel}
     />
   </div>
 
   <!-- Selection panel -->
   <div class="panel">
     {#if !$filterResult}
-      <p class="hint">Design a filter to see its poles and zeros.</p>
+      <p class="hint">{tx.empty}</p>
     {:else}
-      <div class="sec">Poles [{listAxis.unit}]</div>
+      <div class="sec">{tx.poles} [{listAxis.unit}]</div>
 
       {#if ($remainingPZ.poles ?? []).length === 0}
-        <p class="hint-sm">All poles assigned.</p>
+        <p class="hint-sm">{tx.allPoles}</p>
       {:else}
         {#each ($remainingPZ.poles ?? []) as p (p.id)}
           <label class="pz-row" class:sel={selectedIds.has(p.id)} class:hov={hoveredId === p.id}
@@ -234,9 +262,9 @@
       {/if}
 
       {#if ($filterResult.zeros ?? []).length > 0}
-        <div class="sec mt">Zeros [{listAxis.unit}]</div>
+        <div class="sec mt">{tx.zeros} [{listAxis.unit}]</div>
         {#if ($remainingPZ.zeros ?? []).length === 0}
-          <p class="hint-sm">All zeros assigned.</p>
+          <p class="hint-sm">{tx.allZeros}</p>
         {:else}
           {#each ($remainingPZ.zeros ?? []) as z (z.id)}
             <label class="pz-row" class:sel={selectedIds.has(z.id)} class:hov={hoveredId === z.id}
@@ -256,29 +284,30 @@
       {#if addError}<p class="err">{addError}</p>{/if}
 
       <div class="norm-row">
-        <span class="norm-lbl">Norm.</span>
+        <span class="norm-lbl">{tx.norm}</span>
         <select class="norm-sel" bind:value={normtype}>
-          {#each NORM_OPTIONS as n}<option value={n}>{n}</option>{/each}
+          {#each normOpts as n}<option value={n}>{tx.normNames[n] ?? n}</option>{/each}
         </select>
       </div>
 
       <button class="add-btn" disabled={!selectionValid || adding} on:click={addStage}>
-        {adding ? 'Adding…' : 'Add Stage'}
+        {adding ? tx.adding : tx.add}
       </button>
       <button class="auto-btn" disabled={adding || !(($remainingPZ.poles ?? []).length)}
-        title="Split every unassigned root into 2nd / 1st-order sections, low Q first"
+        title={tx.autoTitle}
         on:click={async () => { adding = true; try { await autoStage(); selectedIds = new Set() } finally { adding = false } }}>
-        Auto-stage remaining
+        {tx.auto}
       </button>
 
       {#if $stages.length > 0}
         <div class="div"></div>
-        <div class="sec">Stages ({$stages.length})</div>
-        {#each $stages as stage (stage.id)}
+        <div class="sec">{fmt(tx.stages, { n: $stages.length })}</div>
+        {#each $stages as stage, i (stage.id)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="stage-row" class:hov={$hoveredStageId === stage.id}
             on:mouseenter={() => hoveredStageId.set(stage.id)} on:mouseleave={() => hoveredStageId.set(null)}>
-            <span class="sname">{stage.name}</span>
+            <span class="sdot" style:background={colorOf(stage, i, $theme, mainColor)}></span>
+            <span class="sname">{stageName(stage.name, $lang)}</span>
             <span class="sdet">{stage.poles.length}P/{stage.zeros.length}Z</span>
             <button class="rm" on:click={() => stages.update(s => s.filter(st => st.id !== stage.id))}>×</button>
           </div>
@@ -415,6 +444,7 @@
     background: var(--surface-2);
     min-width: 0;
   }
+  .sdot { width: 0.55rem; height: 0.55rem; border-radius: 50%; flex-shrink: 0; }
   .sname { font-size: 0.75rem; flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .stage-row.hov { box-shadow: inset 0 0 0 1px var(--accent); }
   .sdet { font-size: 0.68rem; color: var(--text-dim); flex-shrink: 0; }

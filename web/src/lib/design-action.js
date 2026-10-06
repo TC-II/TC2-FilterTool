@@ -14,9 +14,11 @@ import { withRoots } from './roots.js'
 import { remapStages } from './stage-remap.js'
 import { buildStage, rootsModified } from './stages.js'
 import { getWorkerApi } from './worker-client.js'
+import { designBode } from './zpk-bode.js'
+import { table, fmt } from './i18n.js'
 import {
-  designForm, dataUnit, bodePoints, filterParams, filterResult, bodeData, stages,
-  engineStatus, designBusy, designError, toast, liveAdjusting, liveMode, templateDragging, activeTab,
+  lang, designForm, dataUnit, bodePoints, filterParams, filterResult, bodeData, stages,
+  engineStatus, designBusy, designError, toast, liveAdjusting, templateDragging, activeTab, engineReady,
 } from '../stores/app.js'
 
 /**
@@ -126,13 +128,29 @@ export const liveDenorm = {
   get base() { return liveBase },
 }
 
+const TX = {
+  en: {
+    stagesFollow: 'Stages follow the new design: moved poles / zeros were reset.',
+    stageCleared: '{n} stage cleared: the new design\'s poles and zeros don\'t match the old ones.',
+    stagesCleared: '{n} stages cleared: the new design\'s poles and zeros don\'t match the old ones.',
+    undo: 'Undo',
+  },
+  es: {
+    stagesFollow: 'Las etapas siguen al nuevo diseño: se restablecieron los polos / ceros movidos.',
+    stageCleared: 'Se borró {n} etapa: los polos y ceros del nuevo diseño no coinciden con los anteriores.',
+    stagesCleared: 'Se borraron {n} etapas: los polos y ceros del nuevo diseño no coinciden con los anteriores.',
+    undo: 'Deshacer',
+  },
+}
+const txNow = () => table(TX, get(lang))
+
 const toRadNow = () => (get(dataUnit) === 'rad' ? 1 : TWO_PI)
 
 async function designOnce({ params: given } = {}) {
   let params = given
   if (!params) {
     const form = get(designForm)
-    const errs = Object.values(validateForm(form))
+    const errs = Object.values(validateForm(form, get(lang)))
     if (errs.length) { designError.set(errs[0]); return false }
     params = buildParams(form, toRadNow())
   }
@@ -146,7 +164,7 @@ async function designOnce({ params: given } = {}) {
     if (raw.error) { designError.set(raw.error.split('\n').at(-2) ?? raw.error); return false }
     const result = withRoots(raw)
     const r      = freqRangeFromParams(params)
-    const bode   = await api.computeBode(result.num, result.den, r.min, r.max, get(bodePoints))
+    const bode   = await designBode(api, result, r.min, r.max, get(bodePoints))
     const prev   = { params: get(filterParams), result: get(filterResult), bode: get(bodeData), stages: get(stages) }
     const carried = await carryStages(api, prev, params, result)
 
@@ -183,7 +201,7 @@ async function carryStages(api, prev, params, result) {
         try { return await buildStage(api, next, params.filter_type) } catch { return null }
       }))
       if (rebuilt.every(Boolean)) {
-        if (hadRootEdits) toast.set({ message: 'Stages follow the new design: moved poles / zeros were reset.', timeoutMs: 6000 })
+        if (hadRootEdits) toast.set({ message: txNow().stagesFollow, timeoutMs: 6000 })
         return rebuilt
       }
     }
@@ -194,9 +212,10 @@ async function carryStages(api, prev, params, result) {
 
 function offerUndo(prev) {
   const n = prev.stages.length
+  const tx = txNow()
   toast.set({
-    message: `${n} stage${n === 1 ? '' : 's'} cleared: the new design's poles and zeros don't match the old ones.`,
-    actionLabel: 'Undo',
+    message: fmt(n === 1 ? tx.stageCleared : tx.stagesCleared, { n }),
+    actionLabel: tx.undo,
     timeoutMs: 10000,
     onAction: () => {
       designForm.update(f => formFromParams(prev.params, toRadNow(), f))
@@ -208,15 +227,16 @@ function offerUndo(prev) {
   })
 }
 
-// ── Live mode (E6) ───────────────────────────────────────────────────────────
-// With liveMode on, any form change re-designs after a short pause. Denorm
+// ── Live updates ─────────────────────────────────────────────────────────────
+// There is no Design button: any form change re-designs after a short pause
+// (and the first design runs as soon as the engine is ready). Denorm
 // (liveDenorm) and template drags (re-design on release) handle themselves.
 const LIVE_DEBOUNCE_MS = 200
 let liveTimer = null
 
 function liveTick() {
   liveTimer = null
-  if (!get(liveMode) || get(liveAdjusting) || get(templateDragging)) return
+  if (!get(engineReady) || get(liveAdjusting) || get(templateDragging)) return
   const form = get(designForm)
   if (Object.keys(validateForm(form)).length) return
   const current = get(filterParams)
@@ -224,12 +244,12 @@ function liveTick() {
   runDesign()
 }
 
-/** Start watching the form for live mode; returns an unsubscribe function. */
+/** Start watching the form (and the engine coming up); returns an unsubscribe function. */
 export function startLiveMode() {
   const schedule = () => {
     clearTimeout(liveTimer)
-    if (get(liveMode)) liveTimer = setTimeout(liveTick, LIVE_DEBOUNCE_MS)
+    liveTimer = setTimeout(liveTick, LIVE_DEBOUNCE_MS)
   }
-  const unsubs = [designForm.subscribe(schedule), liveMode.subscribe(schedule), templateDragging.subscribe(schedule)]
+  const unsubs = [designForm.subscribe(schedule), engineReady.subscribe(schedule), templateDragging.subscribe(schedule)]
   return () => { clearTimeout(liveTimer); unsubs.forEach(u => u()) }
 }

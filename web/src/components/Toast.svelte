@@ -2,7 +2,9 @@
   // Single transient notice (stores/app.js `toast`), bottom centre, with an
   // optional action button (e.g. Undo). Auto-dismisses after timeoutMs.
   import { onDestroy } from 'svelte'
-  import { toast } from '../stores/app.js'
+  import { toast, lang } from '../stores/app.js'
+
+  const DISMISS = { en: 'Dismiss', es: 'Cerrar' }
 
   let timer = null
   $: schedule($toast)
@@ -27,7 +29,7 @@
     {#if $toast.actionLabel}
       <button class="act" on:click={act}>{$toast.actionLabel}</button>
     {/if}
-    <button class="x" aria-label="Dismiss" on:click={() => toast.set(null)}>×</button>
+    <button class="x" aria-label={DISMISS[$lang] ?? DISMISS.en} on:click={() => toast.set(null)}>×</button>
   </div>
 {/if}
 

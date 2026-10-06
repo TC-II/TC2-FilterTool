@@ -104,10 +104,10 @@ fn elliptic_k(m: f64) -> f64 {
     PI / (2.0 * a)
 }
 
-/// Repository-specific `get_Leps`, represented as ascending coefficients in
-/// the frequency variable.  This mirrors NumPy Legendre->Polynomial,
-/// squaring, integration, and composition with `2*w^2 - 1`.
-pub fn legendre_leps(order: usize, epsilon: f64) -> Vec<f64> {
+/// Legendre-series weights `a_i` of the Optimum L integrand: the squared
+/// series `(sum a_i P_i(t))^2` (times `1 + t` for even orders) integrates to
+/// L_n.  Also returns whether the order is even.
+fn legendre_weights(order: usize) -> (Vec<f64>, bool) {
     assert!(order > 0);
     let k = if order % 2 == 0 {
         order / 2 - 1
@@ -139,6 +139,17 @@ pub fn legendre_leps(order: usize, epsilon: f64) -> Vec<f64> {
         };
     }
 
+    (leg, order % 2 == 0)
+}
+
+/// Repository-specific `get_Leps`, represented as ascending coefficients in
+/// the frequency variable.  This mirrors NumPy Legendre->Polynomial,
+/// squaring, integration, and composition with `2*w^2 - 1`.
+///
+/// Only usable at low orders: the power-basis coefficients grow like 4^n and
+/// cancel catastrophically on |w| <= 1 (see `legendre_prototype`).
+pub fn legendre_leps(order: usize, epsilon: f64) -> Vec<f64> {
+    let (leg, _) = legendre_weights(order);
     let power = legendre_to_power(&leg);
     let mut integrand = mul_poly(&power, &power);
     if order % 2 == 0 {
@@ -158,16 +169,144 @@ pub fn legendre_leps(order: usize, epsilon: f64) -> Vec<f64> {
     composed
 }
 
-/// Stable LHP poles selected exactly as `select_roots` in Filter.py.
+/// Optimum L (Legendre) prototype: the LHP roots of `1 + eps^2 L_n(w^2)`.
+///
+/// Expanding L_n in powers of `w` (as `legendre_leps` does) loses every digit
+/// past order ~16, so the poles are found in `u = 2 w^2 - 1` instead, where
+/// L_n is a degree-n polynomial evaluated stably as an integral of a Legendre
+/// series (Gauss-Legendre quadrature, exact for this degree) and its
+/// derivative is the integrand itself. Aberth-Ehrlich iteration finds the n
+/// roots u_i; each gives one LHP pole `s = -sqrt((u_i + 1) / 2)` (s^2 = -w^2).
 pub fn legendre_prototype(order: usize, epsilon: f64) -> Zpk {
-    let roots = polynomial_roots(&legendre_leps(order, epsilon));
-    let poles: Vec<_> = roots
+    let lp = LegendreL::new(order);
+    let eps2 = epsilon * epsilon;
+    let f = |u: C64| C64::new(1.0, 0.0) + lp.integral(u) * eps2;
+    let df = |u: C64| lp.integrand(u) * eps2;
+
+    // Seeds: a slightly squashed circle around the passband interval [-1, 1]
+    // (the roots hug it like a Chebyshev ellipse), offset from the real axis.
+    let n = order;
+    let mut roots: Vec<C64> = (0..n)
+        .map(|i| {
+            let theta = PI * (2 * i + 1) as f64 / (2 * n) as f64 + 0.4;
+            C64::new(1.3 * theta.cos(), 0.9 * theta.sin())
+        })
+        .collect();
+    for _ in 0..500 {
+        let mut max_step: f64 = 0.0;
+        for i in 0..n {
+            let ui = roots[i];
+            let fi = f(ui);
+            if fi.norm() == 0.0 {
+                continue;
+            }
+            let ratio = fi / df(ui);
+            let repulsion: C64 = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| C64::new(1.0, 0.0) / (ui - roots[j]))
+                .sum();
+            let step = ratio / (C64::new(1.0, 0.0) - ratio * repulsion);
+            if !step.is_finite() {
+                continue;
+            }
+            roots[i] = ui - step;
+            max_step = max_step.max(step.norm() / ui.norm().max(1.0));
+        }
+        if max_step < 1e-15 {
+            break;
+        }
+    }
+
+    let poles: Vec<C64> = roots
         .into_iter()
-        .map(|root| root * C64::new(0.0, -1.0))
-        .filter(|root| root.re <= 1e-8)
+        .map(|u| {
+            let s = ((u + 1.0) * 0.5).sqrt() * C64::new(0.0, 1.0);
+            // Both signs solve s^2 = -w^2: keep the stable one.
+            if s.re > 0.0 { -s } else { s }
+        })
         .collect();
     let gain = signed_pole_product(&poles, order);
     Zpk { zeros: vec![], poles, gain }
+}
+
+/// |H(jw)|^2 of the Optimum L prototype, `1 / (1 + eps^2 L_n(w^2))`, without
+/// computing its poles (order search).
+pub fn legendre_magnitude_sq(order: usize, epsilon: f64, omega: f64) -> f64 {
+    let lp = LegendreL::new(order);
+    let l = lp.integral(C64::new(2.0 * omega * omega - 1.0, 0.0)).re;
+    1.0 / (1.0 + epsilon * epsilon * l)
+}
+
+/// L_n as a function of `u = 2 w^2 - 1`:
+/// `L(u) = integral_{-1}^{u} g(t)^2 (1 + t)^e dt`, `g = sum a_i P_i`, e = 1 for
+/// even orders (0 otherwise). Normalised so that L(1) = 1.
+struct LegendreL {
+    weights: Vec<f64>,
+    even: bool,
+    nodes: Vec<(f64, f64)>,
+}
+
+impl LegendreL {
+    fn new(order: usize) -> Self {
+        let (weights, even) = legendre_weights(order);
+        // Integrand degree <= order - 1: m points integrate it exactly when 2m - 1 >= order - 1.
+        let m = order / 2 + 2;
+        Self { weights, even, nodes: gauss_legendre(m) }
+    }
+
+    fn integrand(&self, t: C64) -> C64 {
+        // g(t) by the three-term recurrence (stable near [-1, 1])
+        let one = C64::new(1.0, 0.0);
+        let (mut p0, mut p1) = (one, t);
+        let mut g = self.weights[0] * p0;
+        for (i, a) in self.weights.iter().enumerate().skip(1) {
+            if i > 1 {
+                let k = (i - 1) as f64;
+                let next = (t * p1 * (2.0 * k + 1.0) - p0 * k) / (k + 1.0);
+                p0 = p1;
+                p1 = next;
+            }
+            g += p1 * *a;
+        }
+        let w = g * g;
+        if self.even { w * (one + t) } else { w }
+    }
+
+    fn integral(&self, u: C64) -> C64 {
+        // Straight path t = -1 + (u + 1)(x + 1)/2, x in [-1, 1]
+        let half = (u + 1.0) * 0.5;
+        let sum: C64 = self.nodes.iter()
+            .map(|&(x, w)| self.integrand(half * (x + 1.0) - 1.0) * w)
+            .sum();
+        sum * half
+    }
+}
+
+/// Gauss-Legendre nodes and weights on [-1, 1] (Newton on P_m).
+fn gauss_legendre(m: usize) -> Vec<(f64, f64)> {
+    (0..m)
+        .map(|i| {
+            let mut x = (PI * (i as f64 + 0.75) / (m as f64 + 0.5)).cos();
+            let mut dp = 1.0;
+            for _ in 0..100 {
+                let (mut p0, mut p1) = (1.0, x);
+                for k in 1..m {
+                    let k = k as f64;
+                    let next = ((2.0 * k + 1.0) * x * p1 - k * p0) / (k + 1.0);
+                    p0 = p1;
+                    p1 = next;
+                }
+                // p1 = P_m(x), p0 = P_{m-1}(x)
+                dp = m as f64 * (x * p1 - p0) / (x * x - 1.0);
+                let dx = p1 / dp;
+                x -= dx;
+                if dx.abs() < 1e-16 {
+                    break;
+                }
+            }
+            (x, 2.0 / ((1.0 - x * x) * dp * dp))
+        })
+        .collect()
 }
 
 /// Repository-specific Gauss denominator `[1, 0, 1, 0, 1/2!, ...]`.

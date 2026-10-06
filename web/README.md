@@ -108,6 +108,7 @@ get it switched on once.
 
 Answers only list the approximations and types enabled in Options. **EXIT**
 returns to the designer, whose state is kept.
+The 🍔/🧉 switch in the game header changes the language (English or Spanish).
 
 - Logic: `src/lib/game/quiz.js` and `src/lib/game/theory.js` (pure; run under node against the engine)
 - UI: `src/components/game/GameMode.svelte`, `GamePlot.svelte`

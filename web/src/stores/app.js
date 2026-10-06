@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store'
 import { DEFAULT_FORM } from '../lib/params.js'
+import { LANGS } from '../lib/i18n.js'
 
 const preferredTheme = typeof window !== 'undefined'
   ? (localStorage.getItem('filtertool.theme')
@@ -27,6 +28,18 @@ function persistedEnum(key, allowed, fallback) {
 }
 
 export const theme = writable(preferredTheme)
+
+/**
+ * UI language: 'en' | 'es' (lib/i18n.js). First visit: Spanish unless the
+ * browser prefers another language.
+ */
+export const lang = persistedEnum(
+  'filtertool.lang', LANGS,
+  typeof navigator !== 'undefined' && !/^es\b/i.test(navigator.language || 'es') ? 'en' : 'es',
+)
+if (typeof document !== 'undefined') {
+  lang.subscribe(value => { document.documentElement.lang = value })
+}
 
 if (typeof window !== 'undefined') {
   theme.subscribe(value => {
@@ -100,8 +113,6 @@ export const liveAdjusting = writable(false)
 /** True while a template handle is dragged (the release re-designs). */
 export const templateDragging = writable(false)
 
-/** E6: re-design automatically (debounced) whenever the form changes. */
-export const liveMode = persistedBool('filtertool.liveMode', false)
 
 /** One transient notice: { message, actionLabel?, onAction?, timeoutMs? } or null. */
 export const toast = writable(null)

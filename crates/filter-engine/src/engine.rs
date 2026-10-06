@@ -1,5 +1,5 @@
 use crate::{
-    bessel_delay_prototype, cauer_order, gauss_prototype, group_delay, legendre_prototype,
+    bessel_delay_prototype, cauer_order, gauss_prototype, group_delay, legendre_magnitude_sq, legendre_prototype,
     lowpass_to_bandpass, lowpass_to_bandreject, lowpass_to_highpass, scale_frequency, C64, Zpk,
 };
 use serde::{Deserialize, Serialize};
@@ -254,13 +254,12 @@ fn select_prototype(r: &DesignRequest, wan: f64) -> Result<(usize, Zpk), String>
         }
         4 => {
             let eps = gp.sqrt();
-            for n in r.N_min..=r.N_max {
-                let zpk = legendre_prototype(n, eps);
-                if n == r.N_max || response_abs(&zpk, wan) <= 10_f64.powf(-r.aa_dB / 20.0) {
-                    return Ok((n, zpk));
-                }
-            }
-            unreachable!()
+            // Order search on the closed-form |H|^2; poles only for the chosen order.
+            let ga_sq = 10_f64.powf(-r.aa_dB / 10.0);
+            let n = (r.N_min..=r.N_max)
+                .find(|&n| legendre_magnitude_sq(n, eps, wan) <= ga_sq)
+                .unwrap_or(r.N_max);
+            Ok((n, legendre_prototype(n, eps)))
         }
         5 | 6 => {
             for n in r.N_min..=r.N_max {

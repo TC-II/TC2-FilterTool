@@ -1,10 +1,11 @@
 <script>
   // One stage: summary, normalization, editable f0 / Q / gain offset, reset / remove.
   import { createEventDispatcher } from 'svelte'
-  import { dataUnit, hoveredStageId } from '../stores/app.js'
+  import { dataUnit, hoveredStageId, lang } from '../stores/app.js'
   import { TWO_PI } from '../lib/approx.js'
-  import { poleSummary, scaleRoots, withQ, NORM_OPTIONS, normLabel, normProblem, Q_MIN, Q_MAX } from '../lib/stage-math.js'
-  import { editStageLive, flushStageEdit, resetStage, removeStage, isModified } from '../lib/stages.js'
+  import { poleSummary, scaleRoots, withQ, normOptions, normLabel, resolveNorm, Q_MIN, Q_MAX } from '../lib/stage-math.js'
+  import { editStageLive, flushStageEdit, resetStage, removeStage, isModified, stageName } from '../lib/stages.js'
+  import { table, fmt } from '../lib/i18n.js'
   import { normGain } from '../lib/stage-eval.js'
   import { formatSI } from '../lib/si.js'
   import NumField from './form/NumField.svelte'
@@ -14,6 +15,36 @@
   export let filterType = 0
 
   const dispatch = createEventDispatcher()
+
+  const TX = {
+    en: {
+      grip: 'Drag to reorder', edited: 'edited', editedTitle: 'Changed since the stage was built',
+      reset: 'Reset to the stage as built', remove: 'Remove stage',
+      kTitle: 'Stage gain k (normalization · offset)',
+      norm: 'Norm.',
+      gain: 'Gain', gainTitle: 'Gain offset on top of the normalization; drag to adjust',
+    },
+    es: {
+      grip: 'Arrastre para reordenar', edited: 'editada', editedTitle: 'Modificada desde que se armó la etapa',
+      reset: 'Volver a la etapa como se armó', remove: 'Quitar etapa',
+      kTitle: 'Ganancia de la etapa k (normalización · ajuste)',
+      norm: 'Norm.',
+      gain: 'Ganancia', gainTitle: 'Ajuste de ganancia sobre la normalización; arrastre para ajustar',
+      // Normalization choices (lib/stage-math.js normLabel / normProblem, in Spanish)
+      normText: {
+        'ω→0':  'ganancia unitaria en continua (ω→0)',
+        'ω→∞':  'ganancia unitaria en alta frecuencia (ω→∞)',
+        'ω→ω0': 'ganancia unitaria en |p| (ω→ω0)',
+      },
+    },
+  }
+  $: tx = table(TX, $lang)
+  const cap = t => t[0].toUpperCase() + t.slice(1)
+  function normText(n, ft, t) {
+    if (!t.normText) return normLabel(n, ft)
+    if (n === 'Passband') return `Auto: ${t.normText[resolveNorm(n, ft)]}`
+    return t.normText[n] ? cap(t.normText[n]) : n
+  }
 
   $: uf       = $dataUnit === 'rad' ? TWO_PI : 1
   $: uLabel   = $dataUnit === 'rad' ? 'rad/s' : 'Hz'
@@ -62,28 +93,28 @@
   on:mouseleave={() => hoveredStageId.set(null)}
 >
   <div class="head">
-    <span class="grip" title="Drag to reorder" on:pointerdown={e => dispatch('grab', e)}>⋮⋮</span>
+    <span class="grip" title={tx.grip} on:pointerdown={e => dispatch('grab', e)}>⋮⋮</span>
     <span class="swatch"></span>
-    <span class="name">{stage.name}</span>
-    {#if edited}<span class="badge" title="Changed since the stage was built">edited</span>{/if}
+    <span class="name">{stageName(stage.name, $lang)}</span>
+    {#if edited}<span class="badge" title={tx.editedTitle}>{tx.edited}</span>{/if}
     <span class="spacer"></span>
-    <button class="icon" title="Reset to the stage as built" disabled={!edited} on:click={() => resetStage(stage.id)}>↺</button>
-    <button class="icon danger" title="Remove stage" on:click={() => removeStage(stage.id)}>×</button>
+    <button class="icon" title={tx.reset} disabled={!edited} on:click={() => resetStage(stage.id)}>↺</button>
+    <button class="icon danger" title={tx.remove} on:click={() => removeStage(stage.id)}>×</button>
   </div>
 
   <div class="meta">
     <span>{orderText(stage)}</span>
     {#if f0 != null}<span>{fsym}₀ {formatSI(f0)} {uLabel}</span>{/if}
     {#if hasQ}<span>Q {summary.q.toFixed(3)}</span>{/if}
-    {#if gainDb != null}<span title="Stage gain k (normalization · offset)">k {gainDb.toFixed(2)} dB</span>{/if}
+    {#if gainDb != null}<span title={tx.kTitle}>k {gainDb.toFixed(2)} dB</span>{/if}
   </div>
 
   <label class="norm">
-    <span class="lbl">Norm.</span>
+    <span class="lbl">{tx.norm}</span>
     <select value={stage.normtype ?? 'Passband'} on:change={e => { editStageLive(stage.id, { normtype: e.currentTarget.value }); flushStageEdit() }}>
-      {#each NORM_OPTIONS as n}
-        {@const why = normProblem(n, filterType, stage.zeros, stage.poles)}
-        <option value={n} disabled={!!why && n !== (stage.normtype ?? 'Passband')}>{normLabel(n, filterType)}{why ? ` — n/a (${why})` : ''}</option>
+      <!-- Only the normalizations that work for this stage's roots (and the current one) -->
+      {#each normOptions(filterType, stage.zeros, stage.poles, stage.normtype ?? 'Passband') as n}
+        <option value={n}>{normText(n, filterType, tx)}</option>
       {/each}
     </select>
   </label>
@@ -95,8 +126,8 @@
     {#if hasQ}
       <NumField layout="stack" label="Q" bind:value={qEdit} min={Q_MIN} max={Q_MAX} si={false} on:scrubend={flushStageEdit} />
     {/if}
-    <NumField layout="stack" label="Gain" bind:value={gEdit} unit="dB" min={-200} max={200} log={false} step={0.5}
-      title="Gain offset on top of the normalization; drag to adjust" on:scrubend={flushStageEdit} />
+    <NumField layout="stack" label={tx.gain} bind:value={gEdit} unit="dB" min={-200} max={200} log={false} step={0.5}
+      title={tx.gainTitle} on:scrubend={flushStageEdit} />
   </div>
 </div>
 

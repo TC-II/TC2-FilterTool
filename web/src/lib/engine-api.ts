@@ -107,6 +107,15 @@ export interface EngineApi {
     freqMaxHz?: number,
     numPoints?: number,
   ): Promise<BodeResponse>
+  /** Bode from the factored form (exact at high order); k = leading gain. */
+  computeBodeZpk(
+    zeros: ComplexPair[],
+    poles: ComplexPair[],
+    k: number,
+    freqMinHz?: number,
+    freqMaxHz?: number,
+    numPoints?: number,
+  ): Promise<BodeResponse>
   buildStageFromZPK(
     zeros: ComplexPair[],
     poles: ComplexPair[],

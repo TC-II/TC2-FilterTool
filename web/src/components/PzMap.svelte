@@ -11,7 +11,9 @@
   //   dragend {ref} · wheel {ref, dir: ±1}
   import { onMount, onDestroy, createEventDispatcher } from 'svelte'
   import Plotly from 'plotly.js-dist'
-  import { theme, showLegend, plotCursor } from '../stores/app.js'
+  import { theme, showLegend, plotCursor, lang } from '../stores/app.js'
+  import { beginPlotWork } from '../lib/plot-activity.js'
+  import { plotlyLocale } from './BodePlot.svelte'
 
   export let groups = []
   export let scale = 1
@@ -26,6 +28,13 @@
   export let canDrag = null
   /** (ref) => boolean — roots that react to the wheel. */
   export let canWheel = null
+  /** (ref) => whether a click on that root means something (pointer cursor, no zoom box). Default: any root. */
+  export let canClick = null
+  /**
+   * Keep the axes where the first render put them: later changes to `groups`
+   * (roots moved / re-tuned) don't re-fit the view. Reset by `resetKey`.
+   */
+  export let stickyRange = false
   /** Changing this resets zoom / frozen ranges (e.g. a new design). */
   export let resetKey = null
   /**
@@ -48,11 +57,12 @@
   let destroyed = false
   let resizeObserver
   let refreshTimer = null
+  let refreshDone = null   // plot-activity token of the scheduled refresh
   let refreshToken = 0
   let wasActive = active
   let frozen = null      // { x: [a, b], y: [a, b] } while / after a drag, until resetKey changes
 
-  $: resetKey, (frozen = null)
+  $: resetKey, scale, (frozen = null)
 
   /** Optional color overrides (keys of C, plus legend / legendBorder), e.g. the game mode's palette. */
   export let palette = null
@@ -129,6 +139,7 @@
   }
 
   const cfg = () => ({
+    locale: plotlyLocale($lang),
     responsive: true, displaylogo: false, displayModeBar: !compact, staticPlot: compact,
     toImageButtonOptions: { format: 'svg', filename },
   })
@@ -146,7 +157,12 @@
     await awaitMathJax()
     if (token !== refreshToken || destroyed || !container || !active) return
     await Plotly.react(container, buildTraces(), makeLayout(), cfg())
-    if (token === refreshToken && !destroyed) dispatch('rendered')
+    if (token !== refreshToken || destroyed) return
+    if (stickyRange && !frozen && groups.some(g => g.roots?.length)) {
+      const ax = axes()
+      if (ax) frozen = { x: ax.xa.range.slice(), y: ax.ya.range.slice() }
+    }
+    dispatch('rendered')
   }
 
   // ── Live overlay ──────────────────────────────────────────────────────────
@@ -183,10 +199,11 @@
   // restarting timer would only redraw once the motion stops.
   function schedule(ms = 16) {
     if (refreshTimer != null) return
-    refreshTimer = setTimeout(() => { refreshTimer = null; refresh() }, ms)
+    const done = refreshDone = beginPlotWork()
+    refreshTimer = setTimeout(() => { refreshTimer = null; refreshDone = null; refresh().finally(done) }, ms)
   }
 
-  $: if (initialized) schedule(), [groups, annotations, scale, C, $showLegend, $plotCursor, frozen, xLabel, yLabel, resetKey]
+  $: if (initialized) schedule(), [groups, annotations, scale, C, $showLegend, $plotCursor, frozen, xLabel, yLabel, resetKey, $lang]
 
   $: if (initialized && active && !wasActive) {
     wasActive = true
@@ -237,13 +254,15 @@
     return Math.abs(ya.p2l(0) - ya.p2l(px)) / scale
   }
 
+  const clickable = ref => (canClick ? canClick(ref) : true)
+
   function setHover(ref) {
     if (ref === hoverRef) return
     hoverRef = ref
     dispatch('hover', { ref })
     if (container) container.style.cursor = ''
     const drag = container?.querySelector('.nsewdrag')
-    if (drag) drag.style.cursor = ref != null ? (canDrag?.(ref) ? 'grab' : 'pointer') : ''
+    if (drag) drag.style.cursor = ref != null ? (canDrag?.(ref) ? 'grab' : clickable(ref) ? 'pointer' : '') : ''
   }
 
   function onMove(e) {
@@ -266,7 +285,9 @@
       dispatch('dragstart', { ref: r.ref })
       window.addEventListener('pointermove', onDragMove)
       window.addEventListener('pointerup', onDragEnd)
-    } else {
+    } else if (clickable(r.ref)) {
+      // A click on a root selects it: keep Plotly from starting a zoom box
+      e.stopPropagation(); e.preventDefault(); swallow = true
       press = { ref: r.ref, x0: px, y0: py }
       window.addEventListener('pointerup', onPressEnd)
     }
@@ -327,6 +348,7 @@
     destroyed = true
     initialized = false
     if (refreshTimer != null) clearTimeout(refreshTimer)
+    refreshDone?.()
     refreshToken++
     resizeObserver?.disconnect()
     window.removeEventListener('pointermove', onDragMove)

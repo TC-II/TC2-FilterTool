@@ -1,10 +1,23 @@
 <script>
-  import { filterResult, filterParams, comparisons, bodePoints, theme, compareDash, colorMode, colorShuffle, activeTab } from '../../stores/app.js'
-  import { APPROX_NAMES, plotColor, compareLine } from '../../lib/approx.js'
+  import { filterResult, filterParams, comparisons, bodePoints, theme, compareDash, colorMode, colorShuffle, activeTab, lang } from '../../stores/app.js'
+  import { table, approxName } from '../../lib/i18n.js'
+  import { plotColor, compareLine } from '../../lib/approx.js'
   import {
     computeImpulse, zpkGainFromBa, responseDuration, pickTimeUnit, scaleTimeResponse, IMPULSE_Y_LABEL,
   } from '../../lib/time-response.js'
   import BodePlot from '../BodePlot.svelte'
+
+  const TX = {
+    en: {
+      empty: 'Enter a valid template to see its impulse response.',
+      fail: 'Could not compute impulse response for this transfer function.',
+    },
+    es: {
+      empty: 'Ingrese una plantilla válida para ver su respuesta al impulso.',
+      fail: 'No se pudo calcular la respuesta al impulso para esta función transferencia.',
+    },
+  }
+  $: tx = table(TX, $lang)
 
   function impulseOf(fr, pts, tEnd) {
     if (!fr) return null
@@ -31,7 +44,7 @@
       x: main.time,
       y: main.value,
       mode: 'lines',
-      name: APPROX_NAMES[$filterParams?.approx_type ?? 0],
+      name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
     }] : []),
     ...$comparisons.flatMap(c => {
@@ -41,7 +54,7 @@
         x: tr.time,
         y: tr.value,
         mode: 'lines',
-        name: APPROX_NAMES[c.approxType],
+        name: approxName(c.approxType, $lang),
         line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
       }]
     }),
@@ -49,11 +62,11 @@
 </script>
 
 {#if !$filterResult}
-  <div class="empty"><p>Design a filter to see its impulse response.</p></div>
+  <div class="empty"><p>{tx.empty}</p></div>
 {:else}
   <div class="time-tab">
     {#if !main}
-      <p class="compute-warn">Could not compute impulse response for this transfer function.</p>
+      <p class="compute-warn">{tx.fail}</p>
     {/if}
     <BodePlot
       {traces}

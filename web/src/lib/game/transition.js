@@ -7,8 +7,18 @@
 
 // All subsets: Greek gives ω / τ in the pixel style (unicode-range loads them on demand)
 import '@fontsource/press-start-2p/400.css'
+import { get } from 'svelte/store'
 import Mascot from './mascot.js'
 import { sfx } from './sfx.js'
+import { lang } from '../../stores/app.js'
+import { table } from '../i18n.js'
+
+/** Splash and mascot texts, in the current UI language. */
+const TX = {
+  en: { title: 'GAME MODE', subtitle: '> NAME THAT FILTER! <', hello: 'QUIZ TIME!', bye: 'SEE YA!', perfect: 'PERFECT!' },
+  es: { title: 'MODO JUEGO', subtitle: '> ¡ADIVINE EL FILTRO! <', hello: '¡A JUGAR!', bye: '¡CHAU!', perfect: '¡PERFECTO!' },
+}
+const tx = () => table(TX, get(lang))
 
 const CURTAIN_Z = 2000        // below the mascot layer (2100), above everything else
 const SPLASH_Z = 2050
@@ -198,9 +208,10 @@ export async function playEnter(switchMode) {
     await switchMode()
     await Promise.race([fontReady, wait(350)])
 
-    const splash = showSplash('GAME MODE', '> NAME THAT FILTER! <')
+    const t = tx()
+    const splash = showSplash(t.title, t.subtitle)
     const M = await mascotWithin(fast ? 0 : 600)
-    if (M) safe(() => M.greet(document.body, { text: 'QUIZ TIME!', autoHideMs: 3600, dismissOnClick: true }))
+    if (M) safe(() => M.greet(document.body, { text: t.hello, autoHideMs: 3600, dismissOnClick: true }))
     await wait(fast ? 300 : 1700)
 
     await splash.remove()
@@ -223,7 +234,7 @@ export async function playExit(switchMode) {
   try {
     sfx.powerDown()
     const M = await mascotWithin(150)
-    if (M) safe(() => M.idle(document.body, { text: 'SEE YA!' }))
+    if (M) safe(() => M.idle(document.body, { text: tx().bye }))
     await curtain.cover(fast ? 0 : 480)
     await switchMode()
     await wait(fast ? 100 : 650)
@@ -238,7 +249,7 @@ export async function playExit(switchMode) {
 }
 
 /** Perfect round: the coal buddy celebrates over `el` with confetti. */
-export async function celebrateOver(el, text = 'PERFECT!') {
+export async function celebrateOver(el, text = tx().perfect) {
   const M = await mascotWithin(300)
   if (!M) return
   return safe(() => M.celebrate(el ?? document.body, { durationMs: 2300, text }))

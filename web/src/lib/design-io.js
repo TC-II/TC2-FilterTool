@@ -5,7 +5,36 @@
 
 import { freqRangeFromParams } from './approx.js'
 import { withRoots } from './roots.js'
+import { designBode } from './zpk-bode.js'
 import { makeStage, buildStage } from './stages.js'
+import { get } from 'svelte/store'
+import { lang } from '../stores/app.js'
+import { table, fmt } from './i18n.js'
+
+const TX = {
+  en: {
+    nothing: 'Nothing to save — design a filter first.',
+    invalid: 'Invalid design file.',
+    version: 'Unsupported design file version ({v}).',
+    noParams: 'Design file is missing filter parameters.',
+    badType: 'Design file has an invalid filter type.',
+    badApprox: 'Design file has an invalid approximation type.',
+    noFile: 'No file selected.',
+  },
+  es: {
+    nothing: 'No hay nada para guardar: primero diseñe un filtro.',
+    invalid: 'Archivo de diseño inválido.',
+    version: 'Versión de archivo de diseño no soportada ({v}).',
+    noParams: 'Al archivo de diseño le faltan los parámetros del filtro.',
+    badType: 'El archivo de diseño tiene un tipo de filtro inválido.',
+    badApprox: 'El archivo de diseño tiene un tipo de aproximación inválido.',
+    noFile: 'No se seleccionó ningún archivo.',
+  },
+}
+const txNow = () => table(TX, get(lang))
+
+/** Error thrown by pickDesignFile() when the picker is dismissed (not a real error). */
+export const NO_FILE = 'no-file'
 
 export const DESIGN_FILE_VERSION = 1
 export const DESIGN_FILE_EXT = '.ftjson'
@@ -22,7 +51,7 @@ export const DESIGN_MIME = 'application/json'
  */
 export function serializeDesign(state) {
   const params = state.filterParams
-  if (!params) throw new Error('Nothing to save — design a filter first.')
+  if (!params) throw new Error(txNow().nothing)
 
   return {
     version: DESIGN_FILE_VERSION,
@@ -54,20 +83,20 @@ export function serializeDesign(state) {
 /** @param {unknown} raw */
 export function parseDesign(raw) {
   const doc = typeof raw === 'string' ? JSON.parse(raw) : raw
-  if (!doc || typeof doc !== 'object') throw new Error('Invalid design file.')
+  if (!doc || typeof doc !== 'object') throw new Error(txNow().invalid)
   if (doc.version !== DESIGN_FILE_VERSION) {
-    throw new Error(`Unsupported design file version (${doc.version ?? '?'}).`)
+    throw new Error(fmt(txNow().version, { v: doc.version ?? '?' }))
   }
   if (!doc.filterParams || typeof doc.filterParams !== 'object') {
-    throw new Error('Design file is missing filter parameters.')
+    throw new Error(txNow().noParams)
   }
   const ft = doc.filterParams.filter_type
   const at = doc.filterParams.approx_type
   if (!Number.isInteger(ft) || ft < 0 || ft > 4) {
-    throw new Error('Design file has an invalid filter type.')
+    throw new Error(txNow().badType)
   }
   if (!Number.isInteger(at) || at < 0 || at > 6) {
-    throw new Error('Design file has an invalid approximation type.')
+    throw new Error(txNow().badApprox)
   }
 
   const stages = Array.isArray(doc.stages) ? doc.stages : []
@@ -107,6 +136,7 @@ export function pickDesignFile() {
     input.accept = `${DESIGN_FILE_EXT},.json,application/json`
     input.style.display = 'none'
 
+    const noFile = () => Object.assign(new Error(txNow().noFile), { code: NO_FILE })
     const finish = (err, value) => {
       input.remove()
       if (err) reject(err)
@@ -116,7 +146,7 @@ export function pickDesignFile() {
     input.addEventListener('change', async () => {
       const file = input.files?.[0]
       if (!file) {
-        finish(new Error('No file selected.'))
+        finish(noFile())
         return
       }
       try {
@@ -126,7 +156,7 @@ export function pickDesignFile() {
         finish(e instanceof Error ? e : new Error(String(e)))
       }
     })
-    input.addEventListener('cancel', () => finish(new Error('No file selected.')))
+    input.addEventListener('cancel', () => finish(noFile()))
 
     document.body.appendChild(input)
     input.click()
@@ -140,7 +170,7 @@ export function pickDesignFile() {
  * @param {(status: string) => void} [onStatus]
  */
 export async function materializeDesign(design, api, onStatus) {
-  onStatus?.('Loading design…')
+  onStatus?.('Loading design…')   // stored in English; LoadingBadge translates
   const params = design.filterParams
   const raw = await api.filterDesign(params)
   if (raw.error) throw new Error(raw.error.split('\n').at(-2) ?? raw.error)
@@ -149,7 +179,7 @@ export async function materializeDesign(design, api, onStatus) {
   const range = freqRangeFromParams(params)
   const pts = design.bodePoints
   onStatus?.('Computing Bode…')
-  const bode = await api.computeBode(result.num, result.den, range.min, range.max, pts)
+  const bode = await designBode(api, result, range.min, range.max, pts)
 
   // Re-attach saved stages to the redesigned roots. Each saved value claims one
   // unused root (repeated roots stay distinct); values that no longer exist are dropped.
