@@ -25,6 +25,21 @@ export function poleSummary(poles) {
   return { w0, q: s > 0 ? w0 / s : Infinity }
 }
 
+/**
+ * Highest pole Q of a whole filter (flat list of [re, im] poles). Each complex
+ * pole has Q = |p| / (2|Re p|) (Infinity on the imaginary axis); real poles
+ * count as Q = 0.5, so an all-real filter returns 0.5. Empty list → null.
+ */
+export function maxPoleQ(poles) {
+  if (!poles?.length) return null
+  let q = Q_MIN
+  for (const p of poles) {
+    if (isReal(p)) continue
+    q = Math.max(q, p[0] === 0 ? Infinity : mag(p) / (2 * Math.abs(p[0])))
+  }
+  return q
+}
+
 /** Multiply every root by r (frequency scaling; shape and Q preserved). */
 export const scaleRoots = (roots, r) => roots.map(([re, im]) => [re * r, im * r])
 

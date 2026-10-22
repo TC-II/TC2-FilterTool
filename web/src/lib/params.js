@@ -272,6 +272,28 @@ export function switchFilterType(form, ft) {
   return f
 }
 
+/**
+ * Change how a BP / BR band is defined, converting the values so both modes
+ * describe the same design: f₀ + BW → edges is the symmetric template; edges →
+ * f₀ + BW takes f₀ from the inner edges (as the engine does) and the two widths.
+ */
+export function switchDefineWith(form, mode) {
+  if (mode === form.defineWith) return form
+  const f = { ...form, defineWith: mode }
+  if (!isBand(form.filterType)) return f
+  if (mode === FREQS) {
+    ;[f.fp1, f.fp2] = bandEdges(form.f0, form.bwp)
+    ;[f.fa1, f.fa2] = bandEdges(form.f0, form.bwa)
+  } else {
+    const bp = form.filterType === BP
+    const [i0, i1] = bp ? [form.fp1, form.fp2] : [form.fa1, form.fa2]
+    f.f0 = Math.sqrt(i0 * i1)
+    f.bwp = form.fp2 - form.fp1
+    f.bwa = form.fa2 - form.fa1
+  }
+  return f
+}
+
 /** Deep equality of two params objects, numbers compared with a relative tolerance. */
 export function paramsClose(a, b, rel = 1e-9) {
   if (typeof a === 'number' && typeof b === 'number')

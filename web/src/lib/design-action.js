@@ -13,7 +13,7 @@ import { buildParams, formFromParams, validateForm, paramsClose } from './params
 import { withRoots } from './roots.js'
 import { remapStages } from './stage-remap.js'
 import { buildStage, rootsModified } from './stages.js'
-import { getWorkerApi } from './worker-client.js'
+import { getWorkerApi, runInSlot, abortSlot, DesignAborted, ABORT_AFTER_MS } from './worker-client.js'
 import { designBode } from './zpk-bode.js'
 import { table, fmt } from './i18n.js'
 import {
@@ -38,7 +38,8 @@ let pending = null
  * @returns {Promise<boolean>} true when the (last) run published a design
  */
 export async function runDesign(request = {}) {
-  if (running) { pending = request; return false }
+  // A slow design (Bessel up to order 50) is killed, not waited for
+  if (running) { pending = request; abortSlot('design', ABORT_AFTER_MS); return false }
   running = true
   let ok = false
   try {
@@ -160,7 +161,7 @@ async function designOnce({ params: given } = {}) {
   engineStatus.set('Computing…')
   try {
     const api = getWorkerApi()
-    const raw = await api.filterDesign(params)
+    const raw = await runInSlot('design', a => a.filterDesign(params))
     if (raw.error) { designError.set(raw.error.split('\n').at(-2) ?? raw.error); return false }
     const result = withRoots(raw)
     const r      = freqRangeFromParams(params)
@@ -175,6 +176,8 @@ async function designOnce({ params: given } = {}) {
     bodeData.set(bode)
     return true
   } catch (e) {
+    // Superseded by a newer request that is already queued: not an error
+    if (e instanceof DesignAborted) return false
     designError.set(e?.message ?? String(e))
     return false
   } finally {

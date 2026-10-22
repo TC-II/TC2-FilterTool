@@ -3,7 +3,7 @@
   import {
     bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit,
     dataUnit, designForm, designBusy, templateDragging, hoveredFields, lang,
-    designError,
+    designError, xScaleKind,
   } from '../../stores/app.js'
   import { table, approxName } from '../../lib/i18n.js'
   import { plotColor, compareLine, freqAxis, freqRangeFromParams, TWO_PI } from '../../lib/approx.js'
@@ -11,7 +11,10 @@
   import { gdGeom, gdHandles, gdDragTo, gdCompliance, delayUnit } from '../../lib/gd-template.js'
   import { runDesign } from '../../lib/design-action.js'
   import { formatSI } from '../../lib/si.js'
+  import { pixelDot } from '../../lib/plot-shapes.js'
+  import { freqSetup, toPx, fromPx } from '../../lib/axis-scale.js'
   import BodePlot from '../BodePlot.svelte'
+  import ScaleToggles from '../ScaleToggles.svelte'
 
   const TX = {
     en: {
@@ -55,12 +58,16 @@
 
   // ── Ranges (frozen while dragging) and traces ────────────────────────────
   let xRange = null, yRange = null, traces = []
+  let xs = freqSetup('log', 1, 1).scale
   const DANGER = { dark: '#f85149', light: '#cf222e' }
   $: if (!dragging) {
     const fr = $bodeData?.freq?.length
       ? { min: $bodeData.freq[0], max: $bodeData.freq[$bodeData.freq.length - 1] }
       : isGD && formValid ? freqRangeFromParams(buildParams($designForm, toRad)) : null
-    xRange = geom && fr ? [fr.min * axis.scale, fr.max * axis.scale] : null
+    // Log: the template's span (Plotly fits the data otherwise); linear / sinh run down to DC
+    const setup = freqSetup($xScaleKind, fr ? fr.min * axis.scale : 1, fr ? fr.max * axis.scale : 1)
+    xs = setup.scale
+    xRange = fr && (geom || $xScaleKind !== 'log') ? setup.range : null
     yRange = geom ? [0, geom.tau0 * 1.25 * du.k] : null
   }
   $: if (!dragging) traces = [
@@ -91,10 +98,11 @@
     dark:  { pass: '#3fb950', centre: '#8b949e', bg: '#0d1117' },
     light: { pass: '#1a7f37', centre: '#57606a', bg: '#f6f8fa' },
   }
-  function buildShapes(g, hs, ax, th, hovered, activeId, k) {
+  function buildShapes(g, hs, ax, th, hovered, activeId, k, xKind) {
     if (!g) return []
     const C = HANDLE[th] ?? HANDLE.dark
-    const X = v => (v <= 0 ? 1e-30 : v === Infinity ? 1e30 : v * ax.scale)
+    // Only a log axis can't reach 0
+    const X = v => (v <= 0 ? (xKind === 'log' ? 1e-30 : 0) : v === Infinity ? 1e30 : v * ax.scale)
     const Y = v => (v === -Infinity ? -1e6 : v === Infinity ? 1e6 : v * k)
     const fill = th === 'light' ? 'rgba(255, 204, 203, 0.45)' : 'rgba(248, 81, 73, 0.16)'
     const out = [{
@@ -113,19 +121,16 @@
     for (const h of hs) {
       if (h.kind !== 'c') continue
       const r = lit(h) ? 6 : 4
-      out.push({
-        type: 'circle', xref: 'x', yref: 'y', xsizemode: 'pixel', ysizemode: 'pixel',
-        xanchor: X(h.x), yanchor: Y(h.y), x0: -r, x1: r, y0: -r, y1: r, fillcolor: C[h.group], line: { color: C.bg, width: 1.5 },
-      })
+      out.push(pixelDot(X(h.x), Y(h.y), r, { fillcolor: C[h.group], line: { color: C.bg, width: 1.5 } }))
     }
     return out
   }
-  $: shapes = buildShapes(geom, handles, axis, $theme, $hoveredFields, drag?.h.id ?? hoverId, du.k)
+  $: shapes = buildShapes(geom, handles, axis, $theme, $hoveredFields, drag?.h.id ?? hoverId, du.k, xs.kind)
 
   // ── Hit testing / drag (same model as the magnitude template) ────────────
   const HIT_EDGE = 6, HIT_CORNER = 9
   const axesOf = () => { const fl = gd?._fullLayout; return fl?.xaxis && fl?.yaxis ? { xa: fl.xaxis, ya: fl.yaxis } : null }
-  const xPx = (xa, x) => xa._offset + xa.l2p(xa.d2l(x))
+  const xPx = (xa, x) => toPx(xa, xs, x)
   const yPx = (ya, y) => ya._offset + ya.l2p(ya.d2l(y))
 
   function hitTest(px, py) {
@@ -206,7 +211,7 @@
     if (!drag || !last) return
     const { xa, ya } = axesOf()
     const [px, py] = last
-    const xPlot = xa.l2d(xa.p2l(px - drag.gx - xa._offset))
+    const xPlot = fromPx(xa, xs, px - drag.gx)
     const yS = ya.l2d(ya.p2l(py - drag.gy - ya._offset)) / du.k
     const next = gdDragTo(drag.startForm, drag.h, xPlot / axis.scale, yS, uf)
     drag.moved = true
@@ -251,24 +256,17 @@
 
   // Unit inside the math: Plotly's MathJax drops plain text after a $…$ title.
   $: yLabel = `$\\tau(${$plotUnit === 'rad' ? '\\omega' : 'f'})\\ [\\mathrm{${du.unit === 'µs' ? '\\mu s' : du.unit}}]$`
-  $: uirevision = isGD ? `gd-${$plotUnit}-${du.unit}` : undefined
+  $: uirevision = isGD
+    ? `gd-${$plotUnit}-${du.unit}-${$xScaleKind}`
+    : `delay-${$filterParams?.filter_type ?? '-'}-${$plotUnit}-${$xScaleKind}`
 </script>
 
-<BodePlot
-  bind:this={plot}
-  {traces}
-  {shapes}
-  {xRange}
-  {yRange}
-  {uirevision}
-  {yLabel}
-  xLabel={axis.xLabel}
-  logX={true}
-  filename="filtool_groupdelay"
-  active={$activeTab === 'groupDelay'}
->
-  {#if geom}
-    <div class="tpl-overlay">
+<div class="gd-tab">
+  <!-- The checks sit above the plot, not on it -->
+  <div class="plot-bar">
+    <ScaleToggles />
+    {#if geom}
+      <div class="checks">
       {#if comp}
         <span class="chip" class:bad={!comp.ok} title={tx.delayTitle}>
           {tx.delay} {comp.ok ? '✓' : '✗'} <b>−{comp.worstPct.toFixed(2)} %</b> (γ {geom.gamma.toFixed(2)} %){#if !comp.ok}&nbsp;@ {formatSI(comp.at * uf)} {$dataUnit === 'rad' ? 'rad/s' : 'Hz'}{/if}
@@ -283,16 +281,36 @@
         <!-- Live updates: the form re-designs by itself a moment after each edit -->
         <span class="chip muted">{tx.updating}</span>
       {/if}
-    </div>
-    {#if label}<div class="drag-label" style="left: {label.x}px; top: {label.y}px">{label.text}</div>{/if}
-  {/if}
-</BodePlot>
+      </div>
+    {/if}
+  </div>
+  <div class="plot-host">
+    <BodePlot
+      bind:this={plot}
+      {traces}
+      {shapes}
+      {xRange}
+      {yRange}
+      {uirevision}
+      {yLabel}
+      xLabel={axis.xLabel}
+      xScale={xs}
+      filename="filtool_groupdelay"
+      active={$activeTab === 'groupDelay'}
+    >
+      {#if geom && label}<div class="drag-label" style="left: {label.x}px; top: {label.y}px">{label.text}</div>{/if}
+    </BodePlot>
+  </div>
+</div>
 
 <style>
-  .tpl-overlay {
-    position: absolute; top: 42px; left: 72px; z-index: 5;
-    display: flex; flex-wrap: wrap; gap: 0.3rem; pointer-events: none; max-width: calc(100% - 240px);
+  .gd-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
+  .plot-host { flex: 1; min-height: 0; min-width: 0; }
+  .plot-bar {
+    flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 0.3rem 0.8rem; min-height: 2rem; padding: 0.2rem 0.75rem; border-bottom: 1px solid var(--surface-2);
   }
+  .checks { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.3rem; min-width: 0; }
   .chip {
     font-size: 0.74rem; line-height: 1.2; padding: 0.18rem 0.5rem; border-radius: 999px; white-space: nowrap;
     border: 1px solid color-mix(in srgb, var(--success) 45%, var(--border));

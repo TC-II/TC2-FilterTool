@@ -60,6 +60,12 @@ export const FREQ_UNITS = ['hz', 'rad']
 export const dataUnit = persistedEnum('filtertool.dataUnit', FREQ_UNITS, 'hz')
 export const plotUnit = persistedEnum('filtertool.plotUnit', FREQ_UNITS, 'hz')
 
+// Frequency-response plot axes (Magnitude, Template, Stages: x and y; Phase, Delay: x): x lin | log | sinh, y dB | lin | sinh (lib/axis-scale.js)
+export const X_SCALES = ['lin', 'log', 'sinh']
+export const Y_SCALES = ['db', 'lin', 'sinh']
+export const xScaleKind = persistedEnum('filtertool.xScale', X_SCALES, 'log')
+export const yScaleKind = persistedEnum('filtertool.yScale', Y_SCALES, 'db')
+
 function loadColorMode() {
   if (typeof window === 'undefined') return 'default'
   const v = localStorage.getItem('filtertool.colorMode')

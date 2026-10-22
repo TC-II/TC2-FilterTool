@@ -58,12 +58,22 @@
   export let xLabel    = '$f\\ [\\mathrm{Hz}]$'
   export let yLabel    = ''
   export let logX      = true
+  /**
+   * Axis scales (lib/axis-scale.js), replacing logX / the linear y default.
+   * Traces, shapes and ranges stay in data units (x: plot unit, y: dB); this
+   * component maps them to what Plotly draws.
+   */
+  export let xScale    = null
+  export let yScale    = null
   export let filename  = 'filtool_plot'
   export let shapes    = []
   export let yRange    = null
   /** Explicit x range in data units (log axes convert internally); null = autorange. */
   export let xRange    = null
-  /** Plotly uirevision: user zoom/pan survives re-renders while this stays the same. */
+  /**
+   * View key: the user's zoom / pan (and mode-bar choices) survive re-renders
+   * while this stays the same; a new key drops them and returns to the app's ranges.
+   */
   export let uirevision = undefined
   /** Fixed y-axis tick step (e.g. 45 for phase in degrees). */
   export let yDtick    = null
@@ -106,6 +116,148 @@
     return palette ? { ...base, ...palette } : base
   }
 
+  // ── View ownership ───────────────────────────────────────────────────────
+  // Plotly's uirevision tracks GUI edits per range END, so an app range that
+  // moves one end (attenuation → yRange[0]) left the axis half-zoomed. The
+  // user's zoom / pan is therefore kept here, per axis, in Plotly units (log10
+  // on log axes), and always passed explicitly: user view, else the app's
+  // range, else autorange. Home / double-click / zooming back out to the app's
+  // range clear it.
+  let userView = { x: null, y: null }
+  $: viewKey = uirevision ?? 'plot'
+  let lastViewKey = viewKey
+  $: if (viewKey !== lastViewKey) {
+    lastViewKey = viewKey
+    userView = { x: null, y: null }
+  }
+
+  $: xType = xScale ? xScale.plotlyType : (logX ? 'log' : 'linear')
+  $: yType = yScale ? yScale.plotlyType : 'linear'
+
+  /** A data-unit range as Plotly holds it (scaled, then log10 on log axes). */
+  function appRange(range, type, scale) {
+    if (!range) return null
+    const r = scale ? range.map(v => scale.fwd(v)) : range.slice()
+    return type === 'log' ? r.map(Math.log10) : r
+  }
+
+  /** The range an axis is meant to show right now (plotted units), if it has one. */
+  const effRange = (name) => name === 'x'
+    ? userView.x ?? appRange(xRange, xType, xScale)
+    : userView.y ?? appRange(yRange, yType, yScale)
+
+  // ── Scale mapping ────────────────────────────────────────────────────────
+  function mapArr(arr, f) {
+    const out = new Array(arr.length)
+    for (let i = 0; i < arr.length; i++) out[i] = f(arr[i])
+    return out
+  }
+
+  /** Traces in data units → plotted units, with the real values kept for hover. */
+  function mapTraces(list) {
+    const mx = xScale?.mapped, my = yScale?.mapped
+    if (!mx && !my) return list
+    return list.map(t => {
+      if (!Array.isArray(t.x) && !ArrayBuffer.isView(t.x)) return t
+      const o = { ...t }
+      if (mx) o.x = mapArr(t.x, xScale.fwd)
+      if (my && t.y) o.y = mapArr(t.y, yScale.fwd)
+      if (t.hovertemplate == null && t.hoverinfo !== 'skip' && t.hoverinfo !== 'text' && t.y) {
+        o.customdata = Array.from(t.x, (x, i) => [x, t.y[i]])
+        const xs = mx ? '%{customdata[0]:.4~s}' : '%{x:.4~s}'
+        const ys = my ? '%{y:.4~g} (%{customdata[1]:.2f} dB)' : '%{y:.4~g}'
+        o.hovertemplate = `${xs}, ${ys}<extra>%{fullData.name}</extra>`
+      }
+      return o
+    })
+  }
+
+  /**
+   * Shapes in data units → plotted units. "Open" template edges (1e30, ±1e4 dB)
+   * would become absurd pixel coordinates on a linear / mapped axis, so they are
+   * clamped to well outside the visible range.
+   */
+  function mapShapes(list) {
+    if (!xScale && !yScale) return list
+    const fix = (scale, type, name) => {
+      if (!scale) return null
+      const f = scale.fwd
+      const r = type === 'linear' ? effRange(name) : null
+      if (!r) return f
+      const span = Math.abs(r[1] - r[0]) || 1
+      const lo = Math.min(r[0], r[1]) - 50 * span, hi = Math.max(r[0], r[1]) + 50 * span
+      return v => Math.min(hi, Math.max(lo, f(v)))
+    }
+    const fx = fix(xScale, xType, 'x'), fy = fix(yScale, yType, 'y')
+    return list.map(s => {
+      const o = { ...s }
+      if (fx && (s.xref ?? 'x') === 'x') for (const k of ['x0', 'x1', 'xanchor']) if (typeof o[k] === 'number') o[k] = fx(o[k])
+      if (fy && (s.yref ?? 'y') === 'y') for (const k of ['y0', 'y1', 'yanchor']) if (typeof o[k] === 'number') o[k] = fy(o[k])
+      return o
+    })
+  }
+
+  /** Custom tick marks for scales Plotly can't tick itself (sinh). */
+  function tickProps(scale, range) {
+    if (!scale?.ticks) return {}
+    const t = Array.isArray(range) ? scale.ticks(range[0], range[1]) : null
+    return { tickmode: 'array', tickvals: t?.tickvals ?? [], ticktext: t?.ticktext ?? [] }
+  }
+
+  /** Re-tick sinh axes to the range actually on screen (after a zoom, pan or redraw). */
+  function syncTicks() {
+    const fl = container?._fullLayout
+    if (!fl || destroyed || !initialized) return
+    const patch = {}
+    for (const [key, scale] of [['xaxis', xScale], ['yaxis', yScale]]) {
+      const ax = fl[key]
+      if (!scale?.ticks || !Array.isArray(ax?.range)) continue
+      const t = scale.ticks(ax.range[0], ax.range[1])
+      if (!t) continue
+      if (JSON.stringify(ax.tickvals) === JSON.stringify(t.tickvals) &&
+          JSON.stringify(ax.ticktext) === JSON.stringify(t.ticktext)) continue
+      patch[`${key}.tickvals`] = t.tickvals
+      patch[`${key}.ticktext`] = t.ticktext
+    }
+    if (Object.keys(patch).length) Plotly.relayout(container, patch)
+  }
+
+  function axisRange(user, app) {
+    if (user) return { range: user.slice(), autorange: false }
+    if (app) return { range: app.slice(), autorange: false }
+    return { autorange: true }
+  }
+
+  function sameRange(a, b) {
+    if (!a || !b) return false
+    return a.every((v, i) => Math.abs(v - b[i]) <= 1e-9 * Math.max(1, Math.abs(v), Math.abs(b[i])))
+  }
+
+  function onRelayout(ev) {
+    if (!ev || destroyed) return
+    let ranged = false
+    for (const [name, key, app] of [
+      ['x', 'xaxis', appRange(xRange, xType, xScale)],
+      ['y', 'yaxis', appRange(yRange, yType, yScale)],
+    ]) {
+      const touched = Object.keys(ev).some(k =>
+        k === `${key}.autorange` || k === `${key}.range` || k.startsWith(`${key}.range[`))
+      if (!touched) continue
+      const range = container?._fullLayout?.[key]?.range
+      if (ev[`${key}.autorange`] === true || !Array.isArray(range) || sameRange(range, app)) {
+        userView[name] = null
+      } else {
+        userView[name] = [range[0], range[1]]
+      }
+      ranged = true
+    }
+    if (ranged) {
+      syncTicks()
+      // open template edges are clamped relative to the visible range
+      if (xScale || yScale) patchShapes()
+    }
+  }
+
   function makeLayout() {
     const colors = plotColors()
     return {
@@ -113,10 +265,11 @@
       plot_bgcolor:  colors.background,
       font:          { color: colors.text, size: 12, family: 'system-ui, sans-serif' },
       margin:        compact ? { l: 40, r: 8, t: 8, b: 24 } : { l: 64, r: 24, t: 36, b: 56 },
-      ...(uirevision !== undefined ? { uirevision } : {}),
+      uirevision: viewKey,
       xaxis: {
-        type:          logX ? 'log' : 'linear',
-        ...(xRange ? { range: logX ? xRange.map(Math.log10) : xRange, autorange: false } : { autorange: true }),
+        type:          xType,
+        ...axisRange(userView.x, appRange(xRange, xType, xScale)),
+        ...tickProps(xScale, effRange('x')),
         title:         compact ? undefined : { text: xLabel, standoff: 8, font: { color: colors.text, size: 12 } },
         gridcolor:     colors.grid,
         linecolor:     colors.line,
@@ -133,7 +286,9 @@
         zerolinecolor: colors.line,
         tickcolor:     colors.line,
         tickfont:      { color: colors.text, size: compact ? 9 : 11 },
-        ...(yRange ? { range: yRange, autorange: false } : { autorange: true }),
+        type:          yType,
+        ...axisRange(userView.y, appRange(yRange, yType, yScale)),
+        ...tickProps(yScale, effRange('y')),
         ...(yDtick != null ? { dtick: yDtick, tick0: 0 } : {}),
       },
       legend: {
@@ -146,13 +301,14 @@
         tracegroupgap: 4,
       },
       showlegend: !compact && $showLegend,
-      hovermode: !compact && $plotCursor ? 'x unified' : false,
+      // a mapped x axis can't title the unified tooltip with the real frequency
+      hovermode: !compact && $plotCursor ? (xScale?.mapped ? 'closest' : 'x unified') : false,
       modebar: {
         color:       colors.modebar,
         activecolor: colors.modebarActive,
         bgcolor:     colors.modebarBg,
       },
-      shapes,
+      shapes: mapShapes(shapes),
     }
   }
 
@@ -178,7 +334,7 @@
   // Home / double-click go to the ranges this plot was last given (lib/plot-home.js)
   let homeKey = null
   function syncHome() {
-    const key = `${xRange?.join(',')}|${yRange?.join(',')}|${logX}|${uirevision}`
+    const key = `${xRange?.join(',')}|${yRange?.join(',')}|${logX}|${xScale?.sig}|${yScale?.sig}|${uirevision}`
     if (key === homeKey) return
     homeKey = key
     setHome(container, { xaxis: !!xRange, yaxis: !!yRange })
@@ -189,9 +345,10 @@
     const token = ++refreshToken
     await awaitMathJax()
     if (token !== refreshToken || destroyed || !container || !active) return
-    await Plotly.react(container, traces, makeLayout(), CONFIG)
+    await Plotly.react(container, mapTraces(traces), makeLayout(), CONFIG)
     if (token !== refreshToken || destroyed || !container || !active) return
     syncHome()
+    syncTicks()
     Plotly.Plots.resize(container)
     dispatch('rendered')
   }
@@ -225,7 +382,7 @@
       'modebar.activecolor': c.modebarActive,
       'modebar.bgcolor':     c.modebarBg,
       'xaxis.spikecolor':    c.spike,
-      shapes,   // template mask fill is theme-dependent too
+      shapes: mapShapes(shapes),   // template mask fill is theme-dependent too
     })
   }
 
@@ -257,7 +414,7 @@
     // ~90 ms, a visible flicker).
     if (staleWhileHidden) {
       staleWhileHidden = false
-      lastInputs = [traces, _plotPrefs, yRange, xRange, uirevision, logX, yDtick]
+      lastInputs = [traces, _plotPrefs, yRange, xRange, uirevision, logX, yDtick, xScale?.sig, yScale?.sig]
       lastShapes = shapes
       refreshPlot()
     }
@@ -268,7 +425,8 @@
   }
 
   onMount(() => {
-    Plotly.newPlot(container, traces, makeLayout(), CONFIG)
+    Plotly.newPlot(container, mapTraces(traces), makeLayout(), CONFIG)
+    container.on?.('plotly_relayout', onRelayout)
     initialized = true
     resizeObserver = new ResizeObserver(() => {
       if (initialized && !destroyed && active && container) Plotly.Plots.resize(container)
@@ -289,7 +447,7 @@
       shapesFrame = null
       if (!initialized || destroyed || !container || !active) return
       lastShapes = shapes
-      Plotly.relayout(container, { shapes })
+      Plotly.relayout(container, { shapes: mapShapes(shapes) })
     })
   }
 
@@ -297,7 +455,7 @@
     // Skip inactive tabs — overlapping reacts while hidden leave MathJax titles blank.
     if (initialized && !destroyed && !active) { staleWhileHidden = true; return }
     if (!initialized || destroyed) return
-    const inputs = [traces, _plotPrefs, yRange, xRange, uirevision, logX, yDtick]
+    const inputs = [traces, _plotPrefs, yRange, xRange, uirevision, logX, yDtick, xScale?.sig, yScale?.sig]
     const same = lastInputs && inputs.every((v, i) => v === lastInputs[i])
     if (same && refreshTimer == null) {
       if (shapes !== lastShapes) patchShapes()

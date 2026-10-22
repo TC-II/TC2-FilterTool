@@ -73,6 +73,7 @@
       xLabel={timeUnit.xLabel}
       yLabel={IMPULSE_Y_LABEL}
       logX={false}
+      uirevision={`impulse-${$filterParams?.filter_type ?? '-'}-${timeUnit.xLabel}`}
       filename="filtool_impulse"
       active={$activeTab === 'impulse'}
     />

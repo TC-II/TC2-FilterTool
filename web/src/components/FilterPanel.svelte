@@ -3,7 +3,7 @@
   import { liveDenorm } from '../lib/design-action.js'
   import {
     LP, HP, BP, BR, GD, F0_BW, FREQS, allowedApprox, defaultApprox,
-    isBand as isBandType, formFromParams, rescaleForm, validateForm, switchFilterType,
+    isBand as isBandType, formFromParams, rescaleForm, validateForm, switchFilterType, switchDefineWith,
   } from '../lib/params.js'
   import {
     designForm, pendingFormHydration, dataUnit, designError, lang,
@@ -162,7 +162,8 @@
   <div class="group group-row">
     <span>{tx.template}{#if isBand}<span class="unit-cap"> · {uLabel}</span>{/if}</span>
     {#if isBand}
-      <Segmented size="sm" options={DEFINE_OPTIONS} bind:value={$designForm.defineWith} ariaLabel={tx.defineBy} />
+      <Segmented size="sm" options={DEFINE_OPTIONS} value={$designForm.defineWith} ariaLabel={tx.defineBy}
+        on:change={e => designForm.update(f => switchDefineWith(f, e.detail))} />
     {/if}
   </div>
 

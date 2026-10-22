@@ -1,12 +1,14 @@
 <script>
-  import { filterParams, filterResult, comparisons, bodePoints, theme, colorMode, colorShuffle, compareApproxes, compareSameN, liveAdjusting } from '../stores/app.js'
-  import { getWorkerApi } from '../lib/worker-client.js'
+  import { designForm, filterParams, filterResult, comparisons, bodePoints, theme, colorMode, colorShuffle, compareApproxes, compareSameN, liveAdjusting } from '../stores/app.js'
+  import { getWorkerApi, runInSlot, abortSlot, ABORT_AFTER_MS } from '../lib/worker-client.js'
+  import { onDestroy } from 'svelte'
   import { designBode } from '../lib/zpk-bode.js'
   import { APPROX_NAMES, plotColor, freqRangeFromParams } from '../lib/approx.js'
   import { GD, MAX_ORDER, allowedApprox } from '../lib/params.js'
   import Segmented from './form/Segmented.svelte'
   import { lang } from '../stores/app.js'
   import { table, fmt, approxName } from '../lib/i18n.js'
+  import { maxPoleQ } from '../lib/stage-math.js'
 
   const TX = {
     en: {
@@ -18,7 +20,7 @@
       mainTitle: 'Main filter (change it with the tiles above)',
       main: 'Main', max: 'max',
       maxTitle: 'Order capped at the maximum (N = {max}): the template may not be met',
-      order: 'Order N = {n}',
+      order: 'Order N = {n}', qmax: 'highest pole Q = {q}',
       hide: 'Hide {name}', overlay: 'Overlay {name}', gdNA: '{name}: not available for group delay', magNA: '{name}: only for low-pass and group delay',
     },
     es: {
@@ -30,20 +32,20 @@
       mainTitle: 'Filtro principal (se cambia con los mosaicos de arriba)',
       main: 'Ppal', max: 'máx.',
       maxTitle: 'Orden limitado al máximo (N = {max}): puede que no se cumpla la plantilla',
-      order: 'Orden N = {n}',
+      order: 'Orden N = {n}', qmax: 'Q máximo de los polos = {q}',
       hide: 'Ocultar {name}', overlay: 'Superponer {name}', gdNA: '{name}: no disponible para retardo de grupo', magNA: '{name}: solo para pasa-bajos y retardo de grupo',
     },
   }
   $: tx = table(TX, $lang)
   $: maxTitle = fmt(tx.maxTitle, { max: MAX_ORDER })
 
-  // Order bars share one scale: the largest order on show (main + ticked comparisons)
-  $: shownN = [
-    $filterResult?.N,
-    ...$comparisons.filter(c => $compareApproxes.includes(c.approxType)).map(c => c.filterResult?.N),
-  ].filter(n => n > 0)
-  $: scaleN = Math.max(1, ...shownN)
-  const barPct = (n, scale) => Math.max(8, Math.round((100 * n) / scale))
+  // Highest pole Q of a design: how hard its sharpest stage is to build
+  function fmtQ(q) {
+    if (q == null) return '?'
+    if (!Number.isFinite(q)) return '∞'
+    return q < 10 ? q.toFixed(2) : q < 100 ? q.toFixed(1) : q.toFixed(0)
+  }
+  $: orderTitle = (n, q) => `${fmt(tx.order, { n: n ?? '?' })} · ${fmt(tx.qmax, { q: fmtQ(q) })}`
 
   let computing = false
   let computeId = 0
@@ -51,8 +53,11 @@
   $: mainApproxType = $filterParams?.approx_type ?? -1
   // GD designs only support Bessel / Gauss, HP / BP / BR everything but them;
   // other selections are kept but skipped (they come back when the type changes).
-  $: allowed = allowedApprox($filterParams?.filter_type)
-  $: naText = $filterParams?.filter_type === GD ? tx.gdNA : tx.magNA
+  // Availability follows the form, not the last design: when a new design fails
+  // (Bessel LP can't meet most templates) the old one stays, and its type would
+  // keep the other approximations locked. Comparisons still compute against the design.
+  $: allowed = allowedApprox($designForm.filterType)
+  $: naText = $designForm.filterType === GD ? tx.gdNA : tx.magNA
   const can = (i, allow) => !allow || allow.has(i)
   $: selectedApproxes = new Set($compareApproxes)
 
@@ -65,28 +70,66 @@
   // (denorm slider) keep the old comparisons and catch up on release.
   $: if (!$liveAdjusting) triggerRecompute($filterParams, $filterResult, $compareApproxes, $compareSameN, $bodePoints)
 
+  // One killable worker per comparison (lib/worker-client.js): deselecting an
+  // approximation, or a new design, aborts its calculation if it is still running
+  // (a Bessel design can run for seconds), while the others carry on. A request
+  // with unchanged inputs reuses the running / finished one.
+  const flights = new Map()   // approxType → { key, done, promise }
+  const slotOf = a => `cmp:${a}`
+
+  function flightFor(approxType, p, range, pts) {
+    const key = JSON.stringify([p, pts])
+    const cur = flights.get(approxType)
+    if (cur?.key === key) return cur.promise
+    if (cur && !cur.done) abortSlot(slotOf(approxType), ABORT_AFTER_MS)
+    const f = { key, done: false, promise: null }
+    f.promise = (async () => {
+      try {
+        const fr = await runInSlot(slotOf(approxType), a => a.filterDesign(p))
+        if (fr.error) return null
+        const bode = await designBode(getWorkerApi(), fr, range.min, range.max, pts ?? 2000)
+        return { approxType, filterResult: fr, bodeData: bode }
+      } catch (e) {
+        if (flights.get(approxType) === f) flights.delete(approxType)   // don't cache a failure / abort
+        throw e
+      } finally {
+        f.done = true
+      }
+    })()
+    flights.set(approxType, f)
+    return f.promise
+  }
+
+  /** Abort and forget every comparison not in `keep`. */
+  function dropFlights(keep) {
+    for (const [a, f] of flights) {
+      if (keep.has(a)) continue
+      if (!f.done) abortSlot(slotOf(a), ABORT_AFTER_MS)
+      flights.delete(a)
+    }
+  }
+  onDestroy(() => dropFlights(new Set()))
+
   async function triggerRecompute(params, mainResult, selected, sameN, pts) {
     const id = ++computeId
     const allow = allowedApprox(params?.filter_type)
     const sel = (selected ?? []).filter(a => can(a, allow))
-    if (!params || sel.length === 0) { comparisons.set([]); return }
+    dropFlights(new Set(params ? sel : []))
+    // (a superseded call's `finally` no longer clears the spinner: do it here)
+    if (!params || sel.length === 0) { comparisons.set([]); computing = false; return }
 
     computing = true
     try {
-      const api = getWorkerApi()
       const range = freqRangeFromParams(params)
 
       const results = await Promise.all(
-        sel.map(async (approxType) => {
+        sel.map(approxType => {
           const p = { ...params, approx_type: approxType }
           if (sameN && mainResult?.N) {
             p.N_min = mainResult.N
             p.N_max = mainResult.N
           }
-          const fr = await api.filterDesign(p)
-          if (fr.error) return null
-          const bode = await designBode(api, fr, range.min, range.max, pts ?? 2000)
-          return { approxType, filterResult: fr, bodeData: bode }
+          return flightFor(approxType, p, range, pts)
         })
       )
 
@@ -130,14 +173,15 @@
         {@const c = plotColor(i, $theme, $colorMode, $colorShuffle)}
         {#if i === mainApproxType}
           {@const n = $filterResult?.N}
+          {@const q = maxPoleQ($filterResult?.poles)}
           <div class="approx-row main-row" style="--c: {c}" title={tx.mainTitle}>
             <span class="main-chip">{tx.main}</span>
             <span class="swatch" style="background: {c}"></span>
             <span class="aname">{name}</span>
             {#if n === MAX_ORDER}<span class="max-tag" title={maxTitle}>{tx.max}</span>{/if}
-            <span class="order main" title={fmt(tx.order, { n: n ?? '?' })}>
-              <span class="bar"><span class="fill" style="width: {n ? barPct(n, scaleN) : 0}%"></span></span>
+            <span class="order main" title={orderTitle(n, q)}>
               <span class="n"><i>N</i>{n ?? '?'}</span>
+              <span class="n q"><i>Q</i>{fmtQ(q)}</span>
             </span>
           </div>
         {:else}
@@ -155,9 +199,10 @@
             <span class="aname">{name}</span>
             {#if on && cmp}
               {#if cmp.filterResult.N === MAX_ORDER}<span class="max-tag" title={maxTitle}>{tx.max}</span>{/if}
-              <span class="order" title={fmt(tx.order, { n: cmp.filterResult.N })}>
-                <span class="bar"><span class="fill" style="width: {barPct(cmp.filterResult.N, scaleN)}%"></span></span>
+              {@const q = maxPoleQ(cmp.filterResult.poles)}
+              <span class="order" title={orderTitle(cmp.filterResult.N, q)}>
                 <span class="n"><i>N</i>{cmp.filterResult.N}</span>
+                <span class="n q"><i>Q</i>{fmtQ(q)}</span>
               </span>
             {/if}
           </label>
@@ -304,28 +349,12 @@
     white-space: nowrap;
   }
 
-  /* Order: a small bar on a shared scale (longest = highest order on show) + the number */
+  /* Order N and the design's highest pole Q */
   .order {
     grid-column: 5;
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-  }
-  .bar {
-    position: relative;
-    width: 2.8rem;
-    height: 4px;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--c) 18%, var(--surface-2));
-    overflow: hidden;
-  }
-  .fill {
-    position: absolute;
-    inset: 0 auto 0 0;
-    border-radius: 2px;
-    background: var(--c);
-    opacity: 0.75;
-    transition: width 0.25s ease-out;
+    gap: 0.5rem;
   }
   .n {
     min-width: 1.6rem;
@@ -343,10 +372,8 @@
     opacity: 0.6;
     margin-right: 0.12rem;
   }
-  .order.main .bar { height: 6px; border-radius: 3px; }
-  .order.main .fill { opacity: 1; border-radius: 3px; }
+  .n.q { min-width: 2.6rem; }
   .order.main .n { font-size: 0.95rem; font-weight: 700; color: var(--c); }
-  @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
 
   .max-tag {
     grid-column: 4;

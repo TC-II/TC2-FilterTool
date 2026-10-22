@@ -3,7 +3,7 @@
   import {
     bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab,
     plotUnit, dataUnit, designForm, hoveredFields, designBusy, templateDragging, liveAdjusting, lang,
-    designError,
+    designError, xScaleKind, yScaleKind,
   } from '../../stores/app.js'
   import { table, fmt, approxName } from '../../lib/i18n.js'
   import { plotColor, compareLine, freqAxis, freqRangeFromParams, TWO_PI } from '../../lib/approx.js'
@@ -11,7 +11,10 @@
   import { templateGeom, templateHandles, dragTo, compliance, transitionNear, symmetrizedGeom } from '../../lib/template.js'
   import { runDesign, liveDenorm, denormPreview } from '../../lib/design-action.js'
   import { formatSI } from '../../lib/si.js'
+  import { pixelDot } from '../../lib/plot-shapes.js'
+  import { freqScale, freqSetup, magScale, toPx, fromPx } from '../../lib/axis-scale.js'
   import BodePlot from '../BodePlot.svelte'
+  import ScaleToggles from '../ScaleToggles.svelte'
 
   export let showTemplate = true
 
@@ -41,10 +44,13 @@
   }
   $: tx = table(TX, $lang)
 
-  function toDb(v) {
-    if (!(v > 0)) return null
+  // Zero magnitude (a transmission zero) is −∞ dB: a gap on a dB axis, 0 on a
+  // linear / sinh one.
+  const DB_FLOOR = -400
+  function toDb(v, floor = null) {
+    if (!(v > 0)) return floor
     const db = 20 * Math.log10(v)
-    return Number.isFinite(db) ? db : null
+    return Number.isFinite(db) ? db : floor
   }
 
   $: axis   = freqAxis($plotUnit)
@@ -80,18 +86,50 @@
   let label = null          // { x, y, text } floating value label
   let plot                  // BodePlot instance
 
-  // ── Axis ranges, frozen while dragging so the plot doesn't move under the cursor
+  // ── Axes, frozen while dragging so the plot doesn't move under the cursor
   let xRange = null, yRange = null
+  let xs = freqScale('log', 1), ys = magScale('db', 1)
+  let dbBounds = null       // [bottom, top] in dB (data units, whatever the y scale)
+  let yKnee = 0.01          // linear |H| where the sinh scale turns logarithmic
   $: if (!dragging && !previewing) {
     const fr = $bodeData?.freq?.length
       ? { min: $bodeData.freq[0], max: $bodeData.freq[$bodeData.freq.length - 1] }
       : freqRangeFromParams(formValid ? buildParams($designForm, toRad) : $filterParams)
-    xRange = showTemplate ? [fr.min * axis.scale, fr.max * axis.scale] : null
-    const f = formValid ? $designForm : null
-    // Template: down to 2·Aa below the gain; Magnitude: 3·Aa (deep stopbands
-    // otherwise autorange to −300 dB and flatten everything that matters)
-    yRange = f && f.filterType !== GD
-      ? (showTemplate ? [f.gainDb - 2 * f.aaDb, f.gainDb] : [f.gainDb - 3 * f.aaDb, f.gainDb + 3])
+    // The designed span on both tabs (Magnitude used to autorange x). Linear and
+    // sinh run down to DC; sinh turns logarithmic at the lowest designed frequency.
+    const x0 = fr.min * axis.scale, x1 = fr.max * axis.scale
+    ;({ scale: xs, range: xRange } = freqSetup($xScaleKind, x0, x1))
+    // Template: down to 2·Aa below the gain, from the live form (an invalid
+    // form keeps the previous range). Magnitude: from the designed params
+    // (denorm changes neither gain nor Aa), 2·Aa down and 3 dB above the gain;
+    // deep stopbands otherwise autorange to −300 dB and flatten everything that
+    // matters, and the limits would move with every denorm step.
+    // The sinh knee sits at the stopband level, gain·10^(−Aa/20).
+    if (showTemplate) {
+      if (formValid) {
+        if ($designForm.filterType !== GD) {
+          dbBounds = [$designForm.gainDb - 2 * $designForm.aaDb, $designForm.gainDb]
+          yKnee = 10 ** (($designForm.gainDb - $designForm.aaDb) / 20)
+        } else {
+          dbBounds = null
+        }
+      }
+    } else {
+      const p = $filterParams
+      if (p && p.filter_type !== GD && p.gain > 0) {
+        const g = 20 * Math.log10(p.gain)
+        dbBounds = [g - 2 * p.aa_dB, g + 3]
+        yKnee = p.gain * 10 ** (-p.aa_dB / 20)
+      } else {
+        dbBounds = null
+      }
+    }
+  }
+  $: if (!dragging && !previewing) {
+    ys = magScale($yScaleKind, yKnee > 0 ? yKnee : 0.01)
+    // dB keeps its bottom; linear / sinh go down to 0 (and 1 dB of headroom on the template)
+    yRange = dbBounds
+      ? ($yScaleKind === 'db' ? dbBounds : [DB_FLOOR, dbBounds[1] + (showTemplate ? 1 : 0)])
       : null
   }
 
@@ -101,13 +139,15 @@
   // Frozen while dragging a handle or previewing denorm; entering a preview
   // re-renders once with the published curve ghosted.
   let ghosted = false
-  $: if (!dragging && !previewing) { ghosted = false; traces = buildTraces(false, $bodeData, $comparisons, compDesign, axis, $theme, $colorMode, $colorShuffle, $compareDash, $filterParams, tx) }
+  $: if (!dragging && !previewing) { ghosted = false; traces = buildTraces(false, $bodeData, $comparisons, compDesign, axis, $theme, $colorMode, $colorShuffle, $compareDash, $filterParams, tx, ys) }
   $: if (previewing && !ghosted) { ghosted = true; traces = buildTraces(true) }
 
-  function buildTraces(ghost) { return [
+  function buildTraces(ghost) {
+    const floor = ys.mapped ? DB_FLOOR : null
+    return [
     ...($bodeData ? [{
       x: $bodeData.freq.map(f => f * axis.scale),
-      y: $bodeData.magnitude.map(toDb),
+      y: $bodeData.magnitude.map(v => toDb(v, floor)),
       mode: 'lines',
       name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
@@ -115,7 +155,7 @@
     }] : []),
     ...$comparisons.map(c => ({
       x: c.bodeData.freq.map(f => f * axis.scale),
-      y: c.bodeData.magnitude.map(toDb),
+      y: c.bodeData.magnitude.map(v => toDb(v, floor)),
       mode: 'lines',
       name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
@@ -148,9 +188,9 @@
     const fl = gd?._fullLayout
     if (!fl?.xaxis || !r?.num?.length) return null
     const xa = fl.xaxis
-    const [l0, l1] = xa.range            // log10 of plot units
+    const [l0, l1] = xa.range            // plotted units: log10 of plot units, or the scale's
     const n = Math.max(200, Math.round(xa._length * 1.5))
-    const toHz = l => 10 ** l / axis.scale
+    const toHz = l => Math.max(0, xs.plotlyType === 'log' ? 10 ** l : xs.inv(l)) / axis.scale
     const freq = Array.from({ length: n + 1 }, (_, i) => toHz(l0 + ((l1 - l0) * i) / n))
     for (const [re, im] of r.zeros) {
       const f = Math.abs(im) / TWO_PI
@@ -184,7 +224,7 @@
     const b = previewBode, fl = gd._fullLayout
     if (!b || !fl?.xaxis) { overlay.dataset.frame = ''; return }
     const xa = fl.xaxis, ya = fl.yaxis
-    const X = f => xa._offset + xa.l2p(xa.d2l(f * axis.scale)), Y = d => ya._offset + ya.l2p(d)
+    const X = f => toPx(xa, xs, f * axis.scale), Y = d => toPx(ya, ys, d)
     const stroke = (ys, color, width) => {
       ctx.strokeStyle = color; ctx.lineWidth = width
       ctx.beginPath()
@@ -200,7 +240,8 @@
     ctx.save()
     ctx.beginPath(); ctx.rect(xa._offset, ya._offset, xa._length, ya._length); ctx.clip()
     ctx.lineJoin = 'round'
-    stroke(b.magnitude.map(m => (m > 0 ? 20 * Math.log10(m) : null)), plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), 2)
+    const floor = ys.mapped ? DB_FLOOR : null
+    stroke(b.magnitude.map(m => toDb(m, floor)), plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), 2)
     if (comp?.bad?.some(v => v !== null)) stroke(comp.bad, DANGER[$theme] ?? DANGER.dark, 3.5)
     ctx.restore()
     overlay.dataset.frame = String(++ovNo)
@@ -220,10 +261,12 @@
 
   const SYM_LINE = { dark: '#8b949e', light: '#6e7781' }
 
-  function buildShapes(g, hs, ax, th, hovered, activeId, sym) {
+  function buildShapes(g, hs, ax, th, hovered, activeId, sym, xKind) {
     if (!g) return []
     const C = HANDLE[th] ?? HANDLE.dark
-    const X = v => (v <= 0 ? X_OPEN[0] : v === Infinity ? X_OPEN[1] : v * ax.scale)
+    // Only a log axis can't reach 0
+    const xOpen = xKind === 'log' ? X_OPEN : [0, X_OPEN[1]]
+    const X = v => (v <= 0 ? xOpen[0] : v === Infinity ? xOpen[1] : v * ax.scale)
     const Y = v => (v === -Infinity ? Y_OPEN[0] : v === Infinity ? Y_OPEN[1] : v)
     const fill = th === 'light' ? 'rgba(255, 204, 203, 0.45)' : 'rgba(248, 81, 73, 0.16)'
     const rect = (x0, x1, y0, y1) => ({
@@ -266,11 +309,9 @@
     for (const h of hs) {
       if (h.kind !== 'c') continue
       const r = lit(h) ? 6 : 4
-      out.push({
-        type: 'circle', xref: 'x', yref: 'y', xsizemode: 'pixel', ysizemode: 'pixel',
-        xanchor: X(h.x), yanchor: h.y, x0: -r, x1: r, y0: -r, y1: r,
+      out.push(pixelDot(X(h.x), h.y, r, {
         fillcolor: C[h.group], line: { color: C.bg, width: 1.5 },
-      })
+      }))
     }
     return out
   }
@@ -283,9 +324,7 @@
     const C = HANDLE[th] ?? HANDLE.dark
     const lp = Math.log10(gd.passHz), ls = Math.log10(gd.stopHz)
     const xd = 10 ** (lp + ((ls - lp) * gd.d) / 100)
-    const dot = (x, r, color) => ({
-      type: 'circle', xref: 'x', yref: 'y', xsizemode: 'pixel', ysizemode: 'pixel',
-      xanchor: x * ax.scale, yanchor: gd.levelDb, x0: -r, x1: r, y0: -r, y1: r,
+    const dot = (x, r, color) => pixelDot(x * ax.scale, gd.levelDb, r, {
       fillcolor: color, line: { color: C.bg, width: 1.5 },
     })
     return [
@@ -300,7 +339,7 @@
   }
 
   $: shapes = showTemplate
-    ? [...buildShapes(geom, handles, axis, $theme, $hoveredFields, drag?.h?.id ?? hoverId, symGeom), ...guideShapes(curveGuide, axis, $theme)]
+    ? [...buildShapes(geom, handles, axis, $theme, $hoveredFields, drag?.h?.id ?? hoverId, symGeom, xs.kind), ...guideShapes(curveGuide, axis, $theme)]
     : []
 
   // ── Pixel geometry / hit testing ─────────────────────────────────────────
@@ -310,9 +349,9 @@
     const fl = gd?._fullLayout
     return fl?.xaxis && fl?.yaxis ? { xa: fl.xaxis, ya: fl.yaxis } : null
   }
-  // Plot-unit x / dB y ↔ pixels relative to the graph div. On log axes d2l is log10.
-  const xPx = (xa, x) => xa._offset + xa.l2p(xa.d2l(x))
-  const yPx = (ya, y) => ya._offset + ya.l2p(ya.d2l(y))
+  // Plot-unit x / dB y ↔ pixels relative to the graph div, through the axis scales.
+  const xPx = (xa, x) => toPx(xa, xs, x)
+  const yPx = (ya, y) => toPx(ya, ys, y)
 
   function hitTest(gd, px, py) {
     const ax = axesOf(gd)
@@ -367,7 +406,7 @@
     const { xa, ya } = ax
     if (px < xa._offset || px > xa._offset + xa._length || py < ya._offset || py > ya._offset + ya._length) return false
     const f = $bodeData.freq
-    const fAt = p => xa.l2d(xa.p2l(p - xa._offset)) / axis.scale
+    const fAt = p => fromPx(xa, xs, p) / axis.scale
     const i0 = Math.max(0, lowerBound(f, fAt(px - 10)) - 1)
     const i1 = Math.min(f.length - 1, lowerBound(f, fAt(px + 10)) + 1)
     let best = Infinity
@@ -384,7 +423,7 @@
 
   const pointerHz = px => {
     const { xa } = axesOf(gd)
-    return xa.l2d(xa.p2l(px - xa._offset)) / axis.scale
+    return fromPx(xa, xs, px) / axis.scale
   }
 
   const fieldsOf = h => [h.xf, h.yf].filter(Boolean)
@@ -505,7 +544,8 @@
       // Pointer travel across the transition band maps to 0–100 % denorm.
       const { passHz, stopHz } = drag.gap
       const span = Math.log10(stopHz) - Math.log10(passHz)
-      const raw = drag.startDenorm + (100 * (Math.log10(pointerHz(px)) - drag.grabLog)) / span
+      // (a linear / sinh axis reaches 0 Hz and below)
+      const raw = drag.startDenorm + (100 * (Math.log10(Math.max(pointerHz(px), 1e-300)) - drag.grabLog)) / span
       const d = Math.round(Math.min(100, Math.max(0, raw)))
       if (d !== drag.d) { drag.d = d; drag.moved = true; liveDenorm.update(d) }
       curveGuide = { ...drag.gap, levelDb: drag.levelDb, d }
@@ -513,8 +553,8 @@
       return
     }
     const hx = px - drag.gx, hy = py - drag.gy
-    const xPlot = ax.xa.l2d(ax.xa.p2l(hx - ax.xa._offset))
-    const yDb   = ax.ya.l2d(ax.ya.p2l(hy - ax.ya._offset))
+    const xPlot = fromPx(ax.xa, xs, hx)
+    const yDb   = fromPx(ax.ya, ys, hy)
     const next = dragTo(drag.startForm, drag.h, xPlot / axis.scale, yDb, uf)
     drag.moved = true
     designForm.set(next)
@@ -581,70 +621,87 @@
     return c.ok ? s : `${s} @ ${formatSI(c.at * uf)} ${$dataUnit === 'rad' ? 'rad/s' : 'Hz'}`
   }
 
-  $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$'
-  $: uirevision = showTemplate ? `tpl-${$designForm.filterType}-${$plotUnit}` : undefined
+  $: yLabel = ys.kind === 'db'
+    ? ($plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$')
+    : ($plotUnit === 'rad' ? '$|H(\\omega)|$' : '$|H(f)|$')
+  // The scales are part of the view key: a new scale is a new view
+  $: uirevision = showTemplate
+    ? `tpl-${$designForm.filterType}-${$plotUnit}-${$xScaleKind}-${$yScaleKind}`
+    : `mag-${$filterParams?.filter_type ?? '-'}-${$plotUnit}-${$xScaleKind}-${$yScaleKind}`
 </script>
 
-<BodePlot
-  bind:this={plot}
-  {traces}
-  {shapes}
-  {yRange}
-  {xRange}
-  {uirevision}
-  {yLabel}
-  xLabel={axis.xLabel}
-  logX={true}
-  filename={showTemplate ? 'filtool_template' : 'filtool_magnitude'}
-  active={$activeTab === tabId}
-  on:rendered={onRendered}
->
-  <canvas class="denorm-overlay" bind:this={overlay} aria-hidden="true"></canvas>
-  {#if showTemplate && geom}
-    <div class="tpl-overlay">
-      {#if $bodeData && comp?.pass}
-        <span class="chip" class:bad={!comp.pass.ok} title={tx.passTitle}>
-          {tx.pass} {comp.pass.ok ? '✓' : '✗'} <b>{fmtMargin(comp.pass)}</b>
-        </span>
-      {/if}
-      {#if $bodeData && comp?.stop}
-        <span class="chip" class:bad={!comp.stop.ok} title={tx.stopTitle}>
-          {tx.stop} {comp.stop.ok ? '✓' : '✗'} <b>{fmtMargin(comp.stop)}</b>
-        </span>
-      {/if}
-      {#if symGeom}
-        <span class="chip muted" title={fmt(tx.symTitle, { centre: (geom.ft === 2 ? tx.symBP : tx.symBR)[0], edge: (geom.ft === 2 ? tx.symBP : tx.symBR)[1] })}>
-          {tx.sym}
-        </span>
-      {/if}
-      {#if !$filterParams}
-        <span class="chip muted">{tx.preview}</span>
-      {:else if stale && $designError}
-        <!-- The form can't be designed: say the plot is the previous design (error in the tooltip) -->
-        <span class="chip bad" title={$designError}>{tx.lastGood}</span>
-      {:else if stale && !dragging && !$liveAdjusting}
-        <!-- Live updates: the form re-designs by itself a moment after each edit -->
-        <span class="chip muted">{tx.updating}</span>
-      {/if}
-    </div>
-    {#if label}
-      <div class="drag-label" style="left: {label.x}px; top: {label.y}px">{label.text}</div>
+<div class="mag-tab">
+  <!-- Scales on the left, template checks on the right: nothing sits on the plot -->
+  <div class="plot-bar">
+    <ScaleToggles y />
+    {#if showTemplate && geom}
+      <div class="checks">
+        {#if $bodeData && comp?.pass}
+          <span class="chip" class:bad={!comp.pass.ok} title={tx.passTitle}>
+            {tx.pass} {comp.pass.ok ? '✓' : '✗'} <b>{fmtMargin(comp.pass)}</b>
+          </span>
+        {/if}
+        {#if $bodeData && comp?.stop}
+          <span class="chip" class:bad={!comp.stop.ok} title={tx.stopTitle}>
+            {tx.stop} {comp.stop.ok ? '✓' : '✗'} <b>{fmtMargin(comp.stop)}</b>
+          </span>
+        {/if}
+        {#if symGeom}
+          <span class="chip muted" title={fmt(tx.symTitle, { centre: (geom.ft === 2 ? tx.symBP : tx.symBR)[0], edge: (geom.ft === 2 ? tx.symBP : tx.symBR)[1] })}>
+            {tx.sym}
+          </span>
+        {/if}
+        {#if !$filterParams}
+          <span class="chip muted">{tx.preview}</span>
+        {:else if stale && $designError}
+          <!-- The form can't be designed: say the plot is the previous design (error in the tooltip) -->
+          <span class="chip bad" title={$designError}>{tx.lastGood}</span>
+        {:else if stale && !dragging && !$liveAdjusting}
+          <!-- Live updates: the form re-designs by itself a moment after each edit -->
+          <span class="chip muted">{tx.updating}</span>
+        {/if}
+      </div>
     {/if}
-  {/if}
-</BodePlot>
+  </div>
+  <div class="plot-host">
+    <BodePlot
+      bind:this={plot}
+      {traces}
+      {shapes}
+      {yRange}
+      {xRange}
+      {uirevision}
+      {yLabel}
+      xLabel={axis.xLabel}
+      xScale={xs}
+      yScale={ys}
+      filename={showTemplate ? 'filtool_template' : 'filtool_magnitude'}
+      active={$activeTab === tabId}
+      on:rendered={onRendered}
+    >
+      <canvas class="denorm-overlay" bind:this={overlay} aria-hidden="true"></canvas>
+      {#if showTemplate && geom && label}
+        <div class="drag-label" style="left: {label.x}px; top: {label.y}px">{label.text}</div>
+      {/if}
+    </BodePlot>
+  </div>
+</div>
 
 <style>
-  .tpl-overlay {
-    position: absolute;
-    top: 42px;
-    left: 72px;
+  .mag-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
+  .plot-host { flex: 1; min-height: 0; min-width: 0; }
+  .plot-bar {
+    flex: 0 0 auto;
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem;
-    pointer-events: none;
-    z-index: 5;
-    max-width: calc(100% - 240px);
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3rem 0.8rem;
+    min-height: 2rem;
+    padding: 0.2rem 0.75rem;
+    border-bottom: 1px solid var(--surface-2);
   }
+  .checks { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.3rem; min-width: 0; }
   .chip {
     font-size: 0.74rem;
     line-height: 1.2;

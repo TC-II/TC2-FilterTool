@@ -73,6 +73,7 @@
       xLabel={timeUnit.xLabel}
       yLabel={STEP_Y_LABEL}
       logX={false}
+      uirevision={`step-${$filterParams?.filter_type ?? '-'}-${timeUnit.xLabel}`}
       filename="filtool_step"
       active={$activeTab === 'step'}
     />

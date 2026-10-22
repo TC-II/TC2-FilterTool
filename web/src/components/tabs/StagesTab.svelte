@@ -3,7 +3,7 @@
   import { get } from 'svelte/store'
   import {
     stages, filterParams, filterResult, bodeData, bodePoints, theme, activeTab, plotUnit, dataUnit,
-    remainingPZ, hoveredStageId, lang, colorMode, colorShuffle,
+    remainingPZ, hoveredStageId, lang, colorMode, colorShuffle, xScaleKind, yScaleKind,
   } from '../../stores/app.js'
   import { table, fmt } from '../../lib/i18n.js'
   import { getWorkerApi } from '../../lib/worker-client.js'
@@ -18,7 +18,9 @@
   import { stageDb } from '../../lib/stage-eval.js'
   import { magAtZpk, designGain } from '../../lib/zpk-bode.js'
   import { formatSI } from '../../lib/si.js'
+  import { freqSetup, magScale, toPx, fromPx } from '../../lib/axis-scale.js'
   import BodePlot from '../BodePlot.svelte'
+  import ScaleToggles from '../ScaleToggles.svelte'
   import PzMap from '../PzMap.svelte'
   import StageCard from '../StageCard.svelte'
 
@@ -98,7 +100,10 @@
     }
   }
 
-  const dbArr = b => b.magnitude.map(m => { const d = toDb(m); return Number.isFinite(d) ? d : null })
+  // A zero of |H| is −∞ dB: a gap on a dB axis, 0 on a linear / sinh one.
+  const DB_FLOOR = -400
+  const fin = (d, floor) => (Number.isFinite(d) ? d : d === -Infinity ? floor : null)
+  const dbArr = (b, floor) => b.magnitude.map(m => fin(toDb(m), floor))
 
   // ── Traces ────────────────────────────────────────────────────────────────
   $: hovered = $hoveredStageId
@@ -108,19 +113,20 @@
   let traces = []
   let ghostFor = null
   $: preview = $stagePreview
-  $: if (!preview) { ghostFor = null; traces = buildTraces($stages, bodes, $bodeData, axis, $theme, hovered, null, tx) }
+  $: if (!preview) { ghostFor = null; traces = buildTraces($stages, bodes, $bodeData, axis, $theme, hovered, null, tx, ysc) }
   // Entering a preview: one re-render with that stage and the cascade ghosted, then frozen.
   $: if (preview && ghostFor !== preview.id) {
     ghostFor = preview.id
-    traces = buildTraces($stages, bodes, $bodeData, axis, $theme, null, preview.id, tx)
+    traces = buildTraces($stages, bodes, $bodeData, axis, $theme, null, preview.id, tx, ysc)
   }
 
-  function buildTraces(list, bmap, designed, ax, th, hov, ghostId, t) {
+  function buildTraces(list, bmap, designed, ax, th, hov, ghostId, t, ysk) {
     const out = []
     const light = th === 'light'
+    const floor = ysk.mapped ? DB_FLOOR : null
     if (designed) {
       out.push({
-        x: designed.freq.map(f => f * ax.scale), y: dbArr(designed), mode: 'lines', name: t.designed,
+        x: designed.freq.map(f => f * ax.scale), y: dbArr(designed, floor), mode: 'lines', name: t.designed,
         line: { color: light ? '#8c959f' : '#6e7681', width: 4 }, opacity: 0.35, hoverinfo: 'skip',
       })
     }
@@ -129,7 +135,7 @@
       if (!b) return
       const on = hov === s.id && ghostId == null, dim = (hov != null && !on) || s.id === ghostId
       out.push({
-        x: b.freq.map(f => f * ax.scale), y: dbArr(b), mode: 'lines', name: stageName(s.name, $lang),
+        x: b.freq.map(f => f * ax.scale), y: dbArr(b, floor), mode: 'lines', name: stageName(s.name, $lang),
         line: { color: stageCol(s, i, th), width: on ? 3 : 1.6 }, opacity: s.id === ghostId ? 0.22 : dim ? 0.3 : 1,
       })
     })
@@ -138,7 +144,12 @@
     if (bs.length && bs.every(Boolean) && bs.every(b => b.freq.length === bs[0].freq.length)) {
       const y = bs[0].freq.map((_, k) => {
         let sum = 0
-        for (const b of bs) { const d = toDb(b.magnitude[k]); if (!Number.isFinite(d)) return null; sum += d }
+        for (const b of bs) {
+          const d = toDb(b.magnitude[k])
+          if (d === -Infinity) return floor
+          if (!Number.isFinite(d)) return null
+          sum += d
+        }
         return sum
       })
       out.push({
@@ -242,7 +253,7 @@
     const st = get(stages).find(x => x.id === p.id)
     if (!st || (st.num !== p.num0 && bodes.get(st.id)?.num === st.num)) stagePreview.set(null)
   }
-  $: preview, $stages, $theme, axis, scheduleDraw()
+  $: preview, $stages, $theme, axis, xsc, ysc, scheduleDraw()
 
   function scheduleDraw() { if (drawFrame == null) drawFrame = requestAnimationFrame(drawOverlay) }
 
@@ -265,15 +276,16 @@
     const grid = bodes.get(s.id)?.bode?.freq ?? [...bodes.values()][0]?.bode?.freq
     if (!grid) return
     const db = stageDb(s, ft, grid)
-    const X = f => xa._offset + xa.l2p(xa.d2l(f * axis.scale))
-    const Y = d => ya._offset + ya.l2p(d)
+    const X = f => toPx(xa, xsc, f * axis.scale)
+    const Y = d => toPx(ya, ysc, d)
+    const floor = ysc.mapped ? DB_FLOOR : null
     const stroke = (ys, color, width, dash) => {
       ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash)
       ctx.beginPath()
       let pen = false
       for (let i = 0; i < grid.length; i++) {
-        const v = ys[i]
-        if (!Number.isFinite(v)) { pen = false; continue }
+        const v = fin(ys[i], floor)
+        if (v == null) { pen = false; continue }
         const x = X(grid[i]), y = Y(v)
         if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true }
       }
@@ -326,17 +338,17 @@
       const b = bodes.get(s.id)?.bode
       if (!b) continue
       const f = b.freq
-      const fAt = p => xa.l2d(xa.p2l(p - xa._offset)) / axis.scale
+      const fAt = p => fromPx(xa, xsc, p) / axis.scale
       let lo = 0, hi = f.length
       const target = fAt(px - 10)
       while (lo < hi) { const m = (lo + hi) >> 1; if (f[m] < target) lo = m + 1; else hi = m }
       for (let i = Math.max(0, lo - 1); i < f.length - 1; i++) {
-        const x0 = xa._offset + xa.l2p(xa.d2l(f[i] * axis.scale))
+        const x0 = toPx(xa, xsc, f[i] * axis.scale)
         if (x0 > px + 10) break
-        const x1 = xa._offset + xa.l2p(xa.d2l(f[i + 1] * axis.scale))
+        const x1 = toPx(xa, xsc, f[i + 1] * axis.scale)
         const d0 = toDb(b.magnitude[i]), d1 = toDb(b.magnitude[i + 1])
         if (!Number.isFinite(d0) || !Number.isFinite(d1)) continue
-        const y0 = ya._offset + ya.l2p(d0), y1 = ya._offset + ya.l2p(d1)
+        const y0 = toPx(ya, ysc, d0), y1 = toPx(ya, ysc, d1)
         const dx = x1 - x0, dy = y1 - y0, L2 = dx * dx + dy * dy
         const t = L2 ? Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / L2)) : 0
         const d = Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy))
@@ -363,10 +375,10 @@
     if (!s) return
     e.stopPropagation(); e.preventDefault(); swallow = true
     const { xaxis: xa, yaxis: ya } = gd._fullLayout
-    frozenY = ya.range.slice()
+    frozenY = ya.range.map(v => ysc.inv(v))   // data units (dB) again
     cdrag = {
       id: s.id, zeros: s.zeros, poles: s.poles, gainDb: s.gainDb ?? 0, x0: px, y0: py,
-      f0: xa.l2d(xa.p2l(px - xa._offset)), db0: ya.p2l(py - ya._offset), moved: false,
+      f0: fromPx(xa, xsc, px), db0: fromPx(ya, ysc, py), moved: false,
     }
     beginPreview(s.id)
     hoveredStageId.set(s.id)
@@ -385,8 +397,10 @@
     const { xaxis: xa, yaxis: ya } = gd._fullLayout
     let dx = px - cdrag.x0, dy = py - cdrag.y0
     if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0 }
-    const ratio = xa.l2d(xa.p2l(cdrag.x0 + dx - xa._offset)) / cdrag.f0
-    const dDb = ya.p2l(cdrag.y0 + dy - ya._offset) - cdrag.db0
+    // The grabbed point follows the pointer on any scale (a linear / sinh axis
+    // reaches 0 and below: keep the frequency ratio positive)
+    const ratio = Math.min(1e4, Math.max(1e-4, fromPx(xa, xsc, cdrag.x0 + dx) / cdrag.f0))
+    const dDb = fromPx(ya, ysc, cdrag.y0 + dy) - cdrag.db0
     cdrag.moved = true
     previewStage(cdrag.id, {
       zeros: scaleRoots(cdrag.zeros, ratio), poles: scaleRoots(cdrag.poles, ratio), gainDb: cdrag.gainDb + dDb,
@@ -483,31 +497,43 @@
     try { await autoStage() } finally { autoBusy = false }
   }
 
-  $: yLabel = $plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$'
-  $: xRange = [freqRange.min * axis.scale, freqRange.max * axis.scale]
+  $: yLabel = $yScaleKind === 'db'
+    ? ($plotUnit === 'rad' ? '$|H(\\omega)|\\ [\\mathrm{dB}]$' : '$|H(f)|\\ [\\mathrm{dB}]$')
+    : ($plotUnit === 'rad' ? '$|H(\\omega)|$' : '$|H(f)|$')
+  $: ({ scale: xsc, range: xRange } = freqSetup($xScaleKind, freqRange.min * axis.scale, freqRange.max * axis.scale))
+  // sinh turns logarithmic at the stopband level, gain·10^(−Aa/20)
+  $: yKnee = $filterParams && $filterParams.filter_type !== 4 && $filterParams.aa_dB > 0
+    ? ($filterParams.gain || 1) * 10 ** (-$filterParams.aa_dB / 20)
+    : 0.01
+  $: ysc = magScale($yScaleKind, yKnee)
 
   // The y axis stays where it was fitted while stages are moved / re-tuned (drag,
   // wheel, card edits): it only re-fits for a new design, a stage added or
   // removed, or a unit change. User zoom is kept as usual (uirevision).
   let stickyY = null
   $: stageIds = $stages.map(st => st.id).join(',')
-  $: $filterResult, stageIds, $plotUnit, (stickyY = null)
+  $: $filterResult, stageIds, $plotUnit, $yScaleKind, (stickyY = null)
   function onBodeRendered() {
     if (stickyY || frozenY || !gd) return
     // Fit only once every stage curve is in (their Bodes arrive asynchronously)
     if (pendingBode.size || $stages.some(st => !bodes.get(st.id)?.bode)) return
     const r = gd._fullLayout?.yaxis?.range
     if (!r?.every(Number.isFinite)) return
+    const [lo, hi] = r.map(v => ysc.inv(v))   // dB
     // Deep stopbands: stop 3·Aa below the gain (as the Magnitude tab)
     const p = $filterParams
     const floor = p && p.filter_type !== 4 && p.aa_dB > 0 ? 20 * Math.log10(p.gain || 1) - 3 * p.aa_dB : -Infinity
-    stickyY = [Math.max(r[0], floor), r[1]]
+    // Linear / sinh axes go down to 0
+    stickyY = [ysc.mapped ? DB_FLOOR : Math.max(lo, floor), hi]
   }
 </script>
 
 <div class="stages-tab">
   <div class="bode">
-    <BodePlot bind:this={plot} {traces} {yLabel} {xRange} yRange={frozenY ?? stickyY} xLabel={axis.xLabel} uirevision={`stages-${$plotUnit}`}
+    <div class="plot-bar"><ScaleToggles y /></div>
+    <div class="plot-host">
+    <BodePlot bind:this={plot} {traces} {yLabel} {xRange} yRange={frozenY ?? stickyY} xLabel={axis.xLabel}
+      xScale={xsc} yScale={ysc} uirevision={`stages-${$plotUnit}-${$xScaleKind}-${$yScaleKind}`}
       filename="filtool_stages" {active} on:rendered={onBodeRendered}>
       <canvas class="stage-overlay" bind:this={overlay} aria-hidden="true"></canvas>
       {#if dragLabel}
@@ -523,6 +549,7 @@
         </div>
       {/if}
     </BodePlot>
+    </div>
   </div>
 
   <aside class="side">
@@ -566,7 +593,12 @@
 
 <style>
   .stages-tab { display: flex; height: 100%; min-height: 0; overflow: hidden; }
-  .bode { flex: 1; min-width: 0; position: relative; }
+  .bode { flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column; }
+  .plot-host { flex: 1; min-height: 0; min-width: 0; }
+  .plot-bar {
+    flex: 0 0 auto; display: flex; align-items: center;
+    min-height: 2rem; padding: 0.2rem 0.75rem; border-bottom: 1px solid var(--surface-2);
+  }
   .stage-overlay { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; }
   .drag-label {
     position: absolute; pointer-events: none; z-index: 6;
