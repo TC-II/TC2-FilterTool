@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import {
-    bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit,
+    bodeData, filterParams, filterResult, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit,
     dataUnit, designForm, designBusy, templateDragging, hoveredFields, lang,
     designError, xScaleKind,
   } from '../../stores/app.js'
@@ -13,6 +13,7 @@
   import { formatSI } from '../../lib/si.js'
   import { pixelDot } from '../../lib/plot-shapes.js'
   import { freqSetup, toPx, fromPx } from '../../lib/axis-scale.js'
+  import { withDcLead } from '../../lib/zpk-bode.js'
   import BodePlot from '../BodePlot.svelte'
   import ScaleToggles from '../ScaleToggles.svelte'
 
@@ -70,24 +71,29 @@
     xRange = fr && (geom || $xScaleKind !== 'log') ? setup.range : null
     yRange = geom ? [0, geom.tau0 * 1.25 * du.k] : null
   }
+  // A linear / sinh x axis reaches 0 Hz: the curves start there
+  $: dc = xs.kind !== 'log'
+  $: main = $bodeData && dc ? withDcLead($bodeData, $filterResult) : $bodeData
+  $: padBad = main && $bodeData ? main.freq.length - $bodeData.freq.length : 0
+  $: bodeOf = c => (dc ? withDcLead(c.bodeData, c.filterResult) : c.bodeData)
   $: if (!dragging) traces = [
     ...($bodeData ? [{
-      x: $bodeData.freq.map(f => f * axis.scale),
-      y: $bodeData.groupDelay.map(v => v * du.k),
+      x: main.freq.map(f => f * axis.scale),
+      y: main.groupDelay.map(v => v * du.k),
       mode: 'lines',
       name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
     }] : []),
     ...$comparisons.map(c => ({
-      x: c.bodeData.freq.map(f => f * axis.scale),
-      y: c.bodeData.groupDelay.map(v => v * du.k),
+      x: bodeOf(c).freq.map(f => f * axis.scale),
+      y: bodeOf(c).groupDelay.map(v => v * du.k),
       mode: 'lines',
       name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
     })),
     ...($bodeData && comp?.bad?.some(v => v !== null) ? [{
-      x: $bodeData.freq.map(f => f * axis.scale),
-      y: comp.bad.map(v => (v == null ? null : v * du.k)),
+      x: main.freq.map(f => f * axis.scale),
+      y: [...new Array(padBad).fill(null), ...comp.bad.map(v => (v == null ? null : v * du.k))],
       mode: 'lines', name: tx.outside,
       line: { color: DANGER[$theme] ?? DANGER.dark, width: 3.5 }, hoverinfo: 'skip',
     }] : []),

@@ -16,7 +16,7 @@
     autoStage, moveStage, previewStage, stagePreview, beginStagePreview, endStagePreview, stageName,
   } from '../../lib/stages.js'
   import { stageDb } from '../../lib/stage-eval.js'
-  import { magAtZpk, designGain } from '../../lib/zpk-bode.js'
+  import { magAtZpk, designGain, withDcLead, dcLeadFreqs, dcEvalFreqs } from '../../lib/zpk-bode.js'
   import { formatSI } from '../../lib/si.js'
   import { freqSetup, magScale, toPx, fromPx } from '../../lib/axis-scale.js'
   import BodePlot from '../BodePlot.svelte'
@@ -113,20 +113,26 @@
   let traces = []
   let ghostFor = null
   $: preview = $stagePreview
-  $: if (!preview) { ghostFor = null; traces = buildTraces($stages, bodes, $bodeData, axis, $theme, hovered, null, tx, ysc) }
+  $: if (!preview) { ghostFor = null; traces = buildTraces($stages, bodes, $bodeData, axis, $theme, hovered, null, tx, ysc, xsc) }
   // Entering a preview: one re-render with that stage and the cascade ghosted, then frozen.
   $: if (preview && ghostFor !== preview.id) {
     ghostFor = preview.id
-    traces = buildTraces($stages, bodes, $bodeData, axis, $theme, null, preview.id, tx, ysc)
+    traces = buildTraces($stages, bodes, $bodeData, axis, $theme, null, preview.id, tx, ysc, xsc)
   }
 
-  function buildTraces(list, bmap, designed, ax, th, hov, ghostId, t, ysk) {
+  function buildTraces(list, bmap, designed, ax, th, hov, ghostId, t, ysk, xsk) {
     const out = []
     const light = th === 'light'
     const floor = ysk.mapped ? DB_FLOOR : null
+    // A linear / sinh x axis reaches 0 Hz: every curve starts there, not at the
+    // lowest designed frequency (L = plotted lead, Le = where it is evaluated)
+    const f0 = designed?.freq?.[0] ?? [...bmap.values()][0]?.bode?.freq?.[0]
+    const L = xsk.kind !== 'log' && f0 > 0 ? dcLeadFreqs(f0) : null
+    const Le = L ? dcEvalFreqs(L) : null
     if (designed) {
+      const dd = L ? withDcLead(designed, $filterResult) : designed
       out.push({
-        x: designed.freq.map(f => f * ax.scale), y: dbArr(designed, floor), mode: 'lines', name: t.designed,
+        x: dd.freq.map(f => f * ax.scale), y: dbArr(dd, floor), mode: 'lines', name: t.designed,
         line: { color: light ? '#8c959f' : '#6e7681', width: 4 }, opacity: 0.35, hoverinfo: 'skip',
       })
     }
@@ -135,7 +141,9 @@
       if (!b) return
       const on = hov === s.id && ghostId == null, dim = (hov != null && !on) || s.id === ghostId
       out.push({
-        x: b.freq.map(f => f * ax.scale), y: dbArr(b, floor), mode: 'lines', name: stageName(s.name, $lang),
+        x: (L ? [...L, ...b.freq] : b.freq).map(f => f * ax.scale),
+        y: L ? [...Array.from(stageDb(s, ft, Le), d => fin(d, floor)), ...dbArr(b, floor)] : dbArr(b, floor),
+        mode: 'lines', name: stageName(s.name, $lang),
         line: { color: stageCol(s, i, th), width: on ? 3 : 1.6 }, opacity: s.id === ghostId ? 0.22 : dim ? 0.3 : 1,
       })
     })
@@ -152,8 +160,22 @@
         }
         return sum
       })
+      let yAll = y
+      if (L) {
+        const ld = list.map(s => stageDb(s, ft, Le))
+        const head = Le.map((_, k) => {
+          let sum = 0
+          for (const a of ld) {
+            if (a[k] === -Infinity) return floor
+            if (!Number.isFinite(a[k])) return null
+            sum += a[k]
+          }
+          return sum
+        })
+        yAll = [...head, ...y]
+      }
       out.push({
-        x: bs[0].freq.map(f => f * ax.scale), y, mode: 'lines', name: t.cascade,
+        x: (L ? [...L, ...bs[0].freq] : bs[0].freq).map(f => f * ax.scale), y: yAll, mode: 'lines', name: t.cascade,
         line: { color: light ? '#24292f' : '#e6edf3', width: 2, dash: 'dot' }, opacity: ghostId != null ? 0.22 : 1,
       })
     }
@@ -163,7 +185,7 @@
       if (!b || !s.num) return
       const w = normOmega(s, ft)
       if (w == null) return
-      const fHz = w === 0 ? b.freq[0] : w === Infinity ? b.freq[b.freq.length - 1] : w / TWO_PI
+      const fHz = w === 0 ? (L ? 0 : b.freq[0]) : w === Infinity ? b.freq[b.freq.length - 1] : w / TWO_PI
       const y = toDb(tfAbs(s.num, s.den, w === 0 ? 0 : w === Infinity ? Infinity : w))
       if (!Number.isFinite(y)) return
       out.push({
@@ -273,9 +295,13 @@
     const s = preview && $stages.find(st => st.id === preview.id)
     if (!s || !fl?.xaxis) { overlay.dataset.frame = ''; return }
     const xa = fl.xaxis, ya = fl.yaxis
-    const grid = bodes.get(s.id)?.bode?.freq ?? [...bodes.values()][0]?.bode?.freq
-    if (!grid) return
-    const db = stageDb(s, ft, grid)
+    const base = bodes.get(s.id)?.bode?.freq ?? [...bodes.values()][0]?.bode?.freq
+    if (!base) return
+    // linear / sinh x: the curves start at 0 Hz (see buildTraces)
+    const L = xsc.kind !== 'log' && base[0] > 0 ? dcLeadFreqs(base[0]) : null
+    const Le = L ? dcEvalFreqs(L) : null
+    const grid = L ? [...L, ...base] : base
+    const db = stageDb(s, ft, L ? [...Le, ...base] : base)
     const X = f => toPx(xa, xsc, f * axis.scale)
     const Y = d => toPx(ya, ysc, d)
     const floor = ysc.mapped ? DB_FLOOR : null
@@ -297,7 +323,10 @@
     const light = $theme === 'light'
     const idx = $stages.indexOf(s)
     // Cascade = this stage (live) + the others (their current Bode)
-    const others = $stages.filter(o => o.id !== s.id).map(o => dbOf(bodes.get(o.id)?.bode))
+    const others = $stages.filter(o => o.id !== s.id).map(o => {
+      const a = dbOf(bodes.get(o.id)?.bode)
+      return a && L ? [...stageDb(o, ft, Le), ...a] : a
+    })
     if (others.every(a => a && a.length === grid.length)) {
       const cas = new Float64Array(grid.length)
       for (let i = 0; i < grid.length; i++) { let v = db[i]; for (const a of others) v += a[i] ?? NaN; cas[i] = v }

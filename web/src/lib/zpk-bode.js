@@ -14,15 +14,25 @@
  * @param {number} k  leading gain: H(s) = k · Π(s − z) / Π(s − p)
  */
 export function bodeFromZpk(zeros, poles, k, minHz, maxHz, points) {
-  const freq = new Array(points), magnitude = new Array(points)
-  const phase = new Array(points), groupDelay = new Array(points)
   const lo = Math.log10(minHz), hi = Math.log10(maxHz)
+  const freq = new Array(points)
+  for (let i = 0; i < points; i++) freq[i] = 10 ** (lo + (points === 1 ? 0 : i / (points - 1)) * (hi - lo))
+  return bodeAtZpk(zeros, poles, k, freq)
+}
+
+/**
+ * Same response on an arbitrary frequency list (Hz). `evalAt` (default: the
+ * list itself) is where it is actually evaluated, so a plotted f = 0 can be
+ * evaluated just above DC.
+ */
+export function bodeAtZpk(zeros, poles, k, freq, evalAt = freq) {
+  const points = freq.length
+  const magnitude = new Array(points)
+  const phase = new Array(points), groupDelay = new Array(points)
   const logK = Math.log(Math.abs(k) || 1e-300)
   const kPhase = k < 0 ? Math.PI : 0
   for (let i = 0; i < points; i++) {
-    const t = points === 1 ? 0 : i / (points - 1)
-    const f = 10 ** (lo + t * (hi - lo))
-    const w = 2 * Math.PI * f
+    const w = 2 * Math.PI * evalAt[i]
     let logMag = logK, ph = kPhase, tau = 0
     for (const [re, im] of zeros) {
       const dr = -re, di = w - im
@@ -36,12 +46,45 @@ export function bodeFromZpk(zeros, poles, k, minHz, maxHz, points) {
       ph -= Math.atan2(di, dr)
       tau -= re / (re * re + di * di)
     }
-    freq[i] = f
     magnitude[i] = Math.exp(logMag)
     phase[i] = (ph * 180) / Math.PI
     groupDelay[i] = Number.isFinite(tau) ? tau : 0
   }
-  return { freq, magnitude, phase, groupDelay }
+  return { freq: Array.from(freq), magnitude, phase, groupDelay }
+}
+
+// ── DC lead ──────────────────────────────────────────────────────────────────
+// A Bode starts at its lowest designed frequency (log grid). Plots whose x axis
+// is linear or sinh reach 0 Hz, so they prepend this short linear segment.
+
+export const DC_LEAD_POINTS = 32
+
+/** Plotted frequencies (Hz) from 0 up to, not including, `minHz`. */
+export const dcLeadFreqs = minHz => Array.from({ length: DC_LEAD_POINTS }, (_, i) => (i * minHz) / DC_LEAD_POINTS)
+
+/** Where to evaluate those: the f = 0 point just above DC (zeros at the origin have no phase at exactly 0). */
+export const dcEvalFreqs = lead => lead.map(f => (f > 0 ? f : lead[1] * 1e-6))
+
+const leadCache = new WeakMap()
+
+/**
+ * `bode` of a design with the response from 0 Hz prepended (same shape), or
+ * `bode` itself when it can't be extended. `result` is the design it belongs to.
+ */
+export function withDcLead(bode, result) {
+  if (!(bode?.freq?.[0] > 0) || !result?.poles) return bode
+  let out = leadCache.get(bode)
+  if (out) return out
+  const lead = dcLeadFreqs(bode.freq[0])
+  const head = bodeAtZpk(result.zeros, result.poles, designGain(result), lead, dcEvalFreqs(lead))
+  out = {
+    freq: [...head.freq, ...bode.freq],
+    magnitude: [...head.magnitude, ...bode.magnitude],
+    phase: [...head.phase, ...bode.phase],
+    groupDelay: [...head.groupDelay, ...bode.groupDelay],
+  }
+  leadCache.set(bode, out)
+  return out
 }
 
 /**

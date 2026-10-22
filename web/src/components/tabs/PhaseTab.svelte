@@ -1,8 +1,9 @@
 <script>
-  import { bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit, lang, xScaleKind } from '../../stores/app.js'
+  import { bodeData, filterParams, filterResult, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab, plotUnit, lang, xScaleKind } from '../../stores/app.js'
   import { approxName } from '../../lib/i18n.js'
   import { plotColor, compareLine, freqAxis } from '../../lib/approx.js'
   import { freqSetup } from '../../lib/axis-scale.js'
+  import { withDcLead } from '../../lib/zpk-bode.js'
   import BodePlot from '../BodePlot.svelte'
   import ScaleToggles from '../ScaleToggles.svelte'
 
@@ -29,17 +30,22 @@
 
   $: axis = freqAxis($plotUnit)
 
+  // A linear / sinh x axis reaches 0 Hz: the curves start there
+  $: dc = $xScaleKind !== 'log'
+  $: main = $bodeData && dc ? withDcLead($bodeData, $filterResult) : $bodeData
+  $: bodeOf = c => (dc ? withDcLead(c.bodeData, c.filterResult) : c.bodeData)
+
   $: traces = [
     ...($bodeData ? [{
-      x: $bodeData.freq.map(f => f * axis.scale),
-      y: $bodeData.phase,
+      x: main.freq.map(f => f * axis.scale),
+      y: main.phase,
       mode: 'lines',
       name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
     }] : []),
     ...$comparisons.map(c => ({
-      x: c.bodeData.freq.map(f => f * axis.scale),
-      y: c.bodeData.phase,
+      x: bodeOf(c).freq.map(f => f * axis.scale),
+      y: bodeOf(c).phase,
       mode: 'lines',
       name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),

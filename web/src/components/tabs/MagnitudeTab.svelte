@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import {
-    bodeData, filterParams, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab,
+    bodeData, filterParams, filterResult, comparisons, theme, compareDash, colorMode, colorShuffle, activeTab,
     plotUnit, dataUnit, designForm, hoveredFields, designBusy, templateDragging, liveAdjusting, lang,
     designError, xScaleKind, yScaleKind,
   } from '../../stores/app.js'
@@ -13,6 +13,7 @@
   import { formatSI } from '../../lib/si.js'
   import { pixelDot } from '../../lib/plot-shapes.js'
   import { freqScale, freqSetup, magScale, toPx, fromPx } from '../../lib/axis-scale.js'
+  import { withDcLead } from '../../lib/zpk-bode.js'
   import BodePlot from '../BodePlot.svelte'
   import ScaleToggles from '../ScaleToggles.svelte'
 
@@ -139,30 +140,35 @@
   // Frozen while dragging a handle or previewing denorm; entering a preview
   // re-renders once with the published curve ghosted.
   let ghosted = false
-  $: if (!dragging && !previewing) { ghosted = false; traces = buildTraces(false, $bodeData, $comparisons, compDesign, axis, $theme, $colorMode, $colorShuffle, $compareDash, $filterParams, tx, ys) }
+  $: if (!dragging && !previewing) { ghosted = false; traces = buildTraces(false, $bodeData, $comparisons, compDesign, axis, $theme, $colorMode, $colorShuffle, $compareDash, $filterParams, tx, ys, xs) }
   $: if (previewing && !ghosted) { ghosted = true; traces = buildTraces(true) }
 
   function buildTraces(ghost) {
     const floor = ys.mapped ? DB_FLOOR : null
+    // A linear / sinh x axis reaches 0 Hz: the curves start there, not at the lowest designed frequency
+    const dc = xs.kind !== 'log'
+    const main = $bodeData && dc ? withDcLead($bodeData, $filterResult) : $bodeData
+    const padBad = main && $bodeData ? main.freq.length - $bodeData.freq.length : 0
+    const bodeOf = c => (dc ? withDcLead(c.bodeData, c.filterResult) : c.bodeData)
     return [
     ...($bodeData ? [{
-      x: $bodeData.freq.map(f => f * axis.scale),
-      y: $bodeData.magnitude.map(v => toDb(v, floor)),
+      x: main.freq.map(f => f * axis.scale),
+      y: main.magnitude.map(v => toDb(v, floor)),
       mode: 'lines',
       name: approxName($filterParams?.approx_type ?? 0, $lang),
       line: { color: plotColor($filterParams?.approx_type ?? 0, $theme, $colorMode, $colorShuffle), width: 2 },
       opacity: ghost ? 0.25 : 1,
     }] : []),
     ...$comparisons.map(c => ({
-      x: c.bodeData.freq.map(f => f * axis.scale),
-      y: c.bodeData.magnitude.map(v => toDb(v, floor)),
+      x: bodeOf(c).freq.map(f => f * axis.scale),
+      y: bodeOf(c).magnitude.map(v => toDb(v, floor)),
       mode: 'lines',
       name: approxName(c.approxType, $lang),
       line: compareLine(c.approxType, $theme, { dash: $compareDash, mode: $colorMode, shuffle: $colorShuffle }),
     })),
     ...($bodeData && !ghost && compDesign?.bad?.some(v => v !== null) ? [{
-      x: $bodeData.freq.map(f => f * axis.scale),
-      y: compDesign.bad,
+      x: main.freq.map(f => f * axis.scale),
+      y: padBad ? [...new Array(padBad).fill(null), ...compDesign.bad] : compDesign.bad,
       mode: 'lines',
       name: tx.outside,
       line: { color: DANGER[$theme] ?? DANGER.dark, width: 3.5 },
